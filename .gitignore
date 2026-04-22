@@ -1,0 +1,6 @@
+build/
+build-codex/
+cmake-build-*/
+
+.idea/
+.qoder/
