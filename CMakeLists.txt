@@ -63,6 +63,13 @@ add_executable(${CMAKE_PROJECT_NAME}
         Library/font_storage/font_storage.h
         Library/font_codec/font_codec.c
         Library/font_codec/font_codec.h
+        Library/Picture/picture_display.c
+        Library/Picture/picture_display.h
+        Library/Picture/jpeg_decoder.c
+        Library/Picture/jpeg_decoder.h
+        Library/Picture/tjpgd.c
+        Library/Picture/tjpgd.h
+        Library/Picture/tjpgdcnf.h
         Library/ui/ui_app.c
         Library/ui/ui_app.h
         Library/ui/ui_common.c

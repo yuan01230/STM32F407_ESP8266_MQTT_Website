@@ -412,3 +412,24 @@ const unsigned short image_data[] = {
 - 让 MCU 专注于读取、轻量解码和 LCD 刷新
 
 这样可以在存储空间、显示速度和实现复杂度之间取得较好的平衡。
+
+## 13. Current Project Implementation Status
+
+The current project now has a first working BMP display path for SD card files.
+
+Implemented items:
+- New module: `Library/Picture/picture_display.c`
+- Public API: `Picture_ShowBMP(const char *path, uint16_t x, uint16_t y)`
+- Supported format: uncompressed `24-bit BMP`
+- Compatible `16-bit BMP` path is also accepted in the current implementation when stored as simple 16-bit rows
+- Display strategy: line-buffered read from `FATFS`, then convert to `RGB565` and write to LCD
+- Current UI hook: the file list now works as a general browser rooted at `0:/`, supports entering subdirectories, and `ui_view` switches `.bmp` files into BMP preview mode before calling the picture module
+
+Current limitations:
+- No JPEG runtime decode
+- No PNG runtime decode
+- No scaling
+- The UI does not yet support image scaling, thumbnails, or richer media-specific browser features; the current browser focuses on generic directory navigation plus `.bmp` preview
+
+Recommended next step:
+- Expand image handling beyond `.bmp`, for example by adding preconverted `RGB565` resource support or richer image-browser features on top of the current generic file browser

@@ -34,7 +34,9 @@ static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected);
  */
 static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected)
 {
-    uint16_t y = (uint16_t)(44U + row * 18U);
+    /* 列表内容整体下移，给标题和当前路径预留更充足的垂直空间，
+     * 避免第一行文件名与顶部路径说明发生重叠。 */
+    uint16_t y = (uint16_t)(64U + row * 18U);
     char line_mixed[128];
     const char *mark = selected ? ">" : " ";
 
@@ -42,8 +44,23 @@ static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected)
     LCD_Fill(0, (uint16_t)(y - 1U), 319, (uint16_t)(y + 16U), WHITE);
     if (idx >= g_file_count) return;
 
-    snprintf(line_mixed, sizeof(line_mixed), "%s%s  .%s  %luB",
-             mark, g_file_entries[idx].name, g_file_entries[idx].ext, (unsigned long)g_file_entries[idx].size);
+    /* 列表项分三类显示：
+     * 1. `[..]` 代表返回父目录；
+     * 2. `[DIR]` 目录项代表可以继续进入；
+     * 3. 普通文件继续显示名称、扩展名和大小。 */
+    if (g_file_entries[idx].type == UI_ENTRY_PARENT)
+    {
+        snprintf(line_mixed, sizeof(line_mixed), "%s[..]", mark);
+    }
+    else if (g_file_entries[idx].type == UI_ENTRY_DIR)
+    {
+        snprintf(line_mixed, sizeof(line_mixed), "%s[DIR] %s", mark, g_file_entries[idx].name);
+    }
+    else
+    {
+        snprintf(line_mixed, sizeof(line_mixed), "%s%s  .%s  %luB",
+                 mark, g_file_entries[idx].name, g_file_entries[idx].ext, (unsigned long)g_file_entries[idx].size);
+    }
     FRONT_COLOR = selected ? RED : BLACK;
     LCD_ShowTextMixed(4, y, 312, 16, (const uint8_t *)line_mixed);
 }
@@ -68,7 +85,7 @@ void UI_ListPage_Show(void)
     static uint32_t last_remain = 0xFFFFFFFFUL;
     uint16_t i;
     uint32_t remain = UI_GetRemainSeconds();
-    char line[40];
+    char line[80];
     uint8_t need_full = 0U;
 
     /* 触发整页重绘的条件：
@@ -86,17 +103,22 @@ void UI_ListPage_Show(void)
         FRONT_COLOR = BLUE;
         LCD_ShowString(8, 8, 304, 16, 16, (uint8_t *)"File List (KEY0)");
         LCD_DrawLine(0, 28, 319, 28);
-        LCD_Fill(0, 40, 319, 292, WHITE);
+        /* 当前目录单独占一行，并向下留白。
+         * 这样路径说明不会再和第一行列表项挤在一起。 */
+        snprintf(line, sizeof(line), "Dir: %s", UI_GetCurrentDir());
+        LCD_ShowString(8, 40, 304, 16, 16, (uint8_t *)line);
+        LCD_DrawLine(0, 58, 319, 58);
+        LCD_Fill(0, 60, 319, 292, WHITE);
 
         if (!g_sd_mounted)
         {
             FRONT_COLOR = RED;
-            LCD_ShowString(8, 44, 304, 16, 16, (uint8_t *)"SD not mounted");
+            LCD_ShowString(8, 64, 304, 16, 16, (uint8_t *)"SD not mounted");
         }
         else if (g_file_count == 0U)
         {
             FRONT_COLOR = RED;
-            LCD_ShowString(8, 44, 304, 16, 16, (uint8_t *)"No files in root");
+            LCD_ShowString(8, 64, 304, 16, 16, (uint8_t *)"No files in current dir");
         }
         else
         {
@@ -110,7 +132,7 @@ void UI_ListPage_Show(void)
         FRONT_COLOR = BLUE;
         LCD_DrawLine(0, 300, 319, 300);
         LCD_ShowString(8, 308, 304, 16, 16, (uint8_t *)"KEY1:Down KEY_UP:Up");
-        LCD_ShowString(8, 326, 304, 16, 16, (uint8_t *)"KEY2:Open/Close KEY0:Main");
+        LCD_ShowString(8, 326, 304, 16, 16, (uint8_t *)"KEY2:Enter/Open KEY0:Main");
         last_remain = 0xFFFFFFFFUL;
     }
     else if (g_sd_mounted && g_file_count > 0U)
