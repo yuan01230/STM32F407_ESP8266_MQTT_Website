@@ -7,16 +7,15 @@
 #include "../tftlcd/tftlcd.h"
 #include "ui_common.h"
 
+#define UI_VIEW_PREVIEW_X 0U
+#define UI_VIEW_PREVIEW_Y 104U
+#define UI_VIEW_PREVIEW_WIDTH 320U
+#define UI_VIEW_PREVIEW_HEIGHT 342U
+
 /**
  * @brief 判断扩展名是否属于当前支持的运行时图片格式
  * @param ext 文件扩展名，不包含点号
  * @return uint8_t 1=按图片处理，0=按普通文件处理
- * @details
- * 当前运行时图片分支只支持：
- * 1. bmp
- * 2. jpg
- * 3. jpeg
- * 判断时忽略大小写，兼容 FATFS 返回的大写或小写扩展名。
  */
 static uint8_t UI_View_IsPictureFile(const char *ext)
 {
@@ -57,7 +56,7 @@ void UI_View_Show(uint16_t index)
 {
     FIL file;
     FRESULT res;
-    UINT read_len = 0;
+    UINT read_len = 0U;
     uint8_t buf[FILE_VIEW_READ_MAX + 1U];
     uint8_t gb_buf[FILE_VIEW_READ_MAX * 2U + 1U];
     uint8_t likely_text = 1U;
@@ -72,7 +71,7 @@ void UI_View_Show(uint16_t index)
     LCD_ShowString(8, 8, 304, 16, 16, (uint8_t *)"File View (KEY2)");
     LCD_DrawLine(0, 28, 319, 28);
 
-    /* 第 1 步：校验索引范围，避免访问文件列表缓存越界。 */
+    /* 第 1 步：校验列表索引，避免访问文件缓存越界。 */
     if (index >= g_file_count)
     {
         FRONT_COLOR = RED;
@@ -80,17 +79,19 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
-    /* 第 2 步：先显示文件名和扩展名，便于用户确认当前打开的是哪一个文件。 */
+    /* 第 2 步：显示文件基本信息。 */
     snprintf(line, sizeof(line), "Name: %s", g_file_entries[index].name);
     FRONT_COLOR = BLACK;
     LCD_ShowString(8, 44, 304, 16, 16, (uint8_t *)line);
-    snprintf(line, sizeof(line), "Ext: %s  Size:%luB",
+
+    snprintf(line,
+             sizeof(line),
+             "Ext: %s  Size:%luB",
              g_file_entries[index].ext,
              (unsigned long)g_file_entries[index].size);
     LCD_ShowString(8, 62, 304, 16, 16, (uint8_t *)line);
 
-    /* 第 3 步：使用当前浏览器目录拼出完整 FATFS 路径。
-     * 这样无论文件来自根目录还是子目录，查看页都能回到正确的来源目录。 */
+    /* 第 3 步：基于当前浏览目录拼完整路径。 */
     if (!UI_BuildSelectedFilePath(index, path, sizeof(path)))
     {
         FRONT_COLOR = RED;
@@ -98,32 +99,43 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
-    /* 第 4 步：如果当前文件是图片，则直接走图片预览分支。
-     * 这里统一交给 Picture_Show()，由图片模块内部再根据扩展名分发到 BMP 或 JPG 解码路径。 */
+    /* 第 4 步：图片文件走图片预览分支。 */
     if (UI_View_IsPictureFile(g_file_entries[index].ext))
     {
         PictureResult picture_ret;
+        char preview_status[64];
 
-        FRONT_COLOR = BLUE;
-        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)"Image Preview:");
+        /* 每次预览前先清空图片区，避免上一张图残留。 */
+        LCD_Fill(UI_VIEW_PREVIEW_X,
+                 UI_VIEW_PREVIEW_Y,
+                 (uint16_t)(UI_VIEW_PREVIEW_X + UI_VIEW_PREVIEW_WIDTH - 1U),
+                 (uint16_t)(UI_VIEW_PREVIEW_Y + UI_VIEW_PREVIEW_HEIGHT - 1U),
+                 WHITE);
+
+        picture_ret = Picture_Show(path,
+                                   UI_VIEW_PREVIEW_X,
+                                   UI_VIEW_PREVIEW_Y,
+                                   UI_VIEW_PREVIEW_WIDTH,
+                                   UI_VIEW_PREVIEW_HEIGHT);
+
+        /* 结果直接显示在 Image Preview: 后面。 */
+        FRONT_COLOR = (picture_ret == PICTURE_OK) ? GREEN : RED;
+        snprintf(preview_status,
+                 sizeof(preview_status),
+                 "Image Preview: %s",
+                 (picture_ret == PICTURE_OK) ? "OK" : Picture_ResultString(picture_ret));
+        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)preview_status);
         LCD_DrawLine(0, 102, 319, 102);
 
-        /* 第 5 步：把图片预览区域固定放在 y=104 之后，
-         * 避开标题、文件名和扩展名所在的头部区域。 */
-        picture_ret = Picture_Show(path, 0, 104);
-
-        /* 第 6 步：在底部状态栏显示图片解码/显示结果。
-         * 只放一条短状态文本，避免遮挡主体图像区域。 */
+        /* 底部仅保留返回提示。 */
         LCD_Fill(0, 446, 319, 479, WHITE);
-        FRONT_COLOR = (picture_ret == PICTURE_OK) ? GREEN : RED;
-        LCD_DrawLine(0, 446, 319, 446);
-        LCD_ShowString(8, 452, 304, 16, 16, (uint8_t *)Picture_ResultString(picture_ret));
         FRONT_COLOR = BLUE;
+        LCD_DrawLine(0, 446, 319, 446);
         LCD_ShowString(8, 462, 304, 16, 16, (uint8_t *)"KEY0/KEY2: Back List");
         return;
     }
 
-    /* 第 7 步：非图片文件继续沿用原来的文本/十六进制预览路径。 */
+    /* 第 5 步：非图片文件按原来的文本/十六进制预览逻辑处理。 */
     res = f_open(&file, path, FA_READ);
     if (res != FR_OK)
     {
@@ -132,7 +144,6 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
-    /* 第 8 步：只读取文件头部一段固定长度样本，用于快速预览。 */
     memset(buf, 0, sizeof(buf));
     res = f_read(&file, buf, FILE_VIEW_READ_MAX, &read_len);
     (void)f_close(&file);
@@ -143,8 +154,7 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
-    /* 第 9 步：先粗略判断这段样本是否更像普通文本。 */
-    for (i = 0; i < read_len; i++)
+    for (i = 0U; i < read_len; i++)
     {
         uint8_t ch = buf[i];
         if (ch == 0U || (ch < 0x20U && ch != '\r' && ch != '\n' && ch != '\t'))
@@ -154,11 +164,9 @@ void UI_View_Show(uint16_t index)
         }
     }
 
-    /* 第 10 步：对文本样本再做 UTF-8 有效性判断。 */
     is_utf8 = UI_IsValidUtf8(buf, (uint16_t)read_len);
     if (likely_text && !is_utf8)
     {
-        /* 第 11 步：普通 ASCII/GB2312 文本可以直接混排显示。 */
         buf[read_len] = '\0';
         FRONT_COLOR = GREEN;
         LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)"Content (GB2312/ASCII):");
@@ -167,7 +175,6 @@ void UI_View_Show(uint16_t index)
     }
     else if (likely_text && is_utf8)
     {
-        /* 第 12 步：UTF-8 文本先转成当前 LCD 文字链路可处理的 GB2312。 */
         FRONT_COLOR = GREEN;
         LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)"Content (UTF-8->GB2312):");
         FRONT_COLOR = BLACK;
@@ -182,15 +189,14 @@ void UI_View_Show(uint16_t index)
     }
     else
     {
-        uint16_t y = 104;
-        uint16_t pos = 0;
+        uint16_t y = 104U;
+        uint16_t pos = 0U;
 
-        /* 第 13 步：非文本文件继续显示十六进制摘要，方便调试任意二进制文件。 */
         FRONT_COLOR = GREEN;
         LCD_ShowString(8, 84, 304, 16, 16,
                        (uint8_t *)(is_utf8 ? "UTF-8 content (hex view):" : "Content (hex, first bytes):"));
         FRONT_COLOR = BLACK;
-        while (pos < read_len && y <= 284)
+        while (pos < read_len && y <= 284U)
         {
             char hexline[64];
             uint16_t j;
@@ -206,7 +212,7 @@ void UI_View_Show(uint16_t index)
             }
             cursor += written;
 
-            for (j = 0; j < n; j++)
+            for (j = 0U; j < n; j++)
             {
                 written = snprintf(cursor,
                                    (size_t)(sizeof(hexline) - (size_t)(cursor - hexline)),
@@ -225,7 +231,6 @@ void UI_View_Show(uint16_t index)
         }
     }
 
-    /* 第 14 步：普通文件查看页底部保留返回提示和自动回主页提示。 */
     FRONT_COLOR = BLUE;
     LCD_DrawLine(0, 300, 319, 300);
     LCD_ShowString(8, 308, 304, 16, 16, (uint8_t *)"KEY0/KEY2: Back List");
@@ -234,8 +239,7 @@ void UI_View_Show(uint16_t index)
 
 void UI_View_OpenSelected(void)
 {
-    /* 查看页只允许打开普通文件。
-     * 如果当前高亮的是 [..] 或目录，说明应该先由列表页处理目录切换，而不是直接进查看页。 */
+    /* 查看页只允许打开普通文件。 */
     if (g_file_count == 0U || g_selected_index >= g_file_count)
     {
         return;

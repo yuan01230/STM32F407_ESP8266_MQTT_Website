@@ -28,19 +28,29 @@ typedef enum
 } JpegDecoderResult;
 
 /**
+ * @brief 将 JPEG 解码状态转换为短文本
+ * @param result JPEG 解码状态
+ * @return const char* 可直接用于状态栏显示的短文本
+ */
+const char *JpegDecoder_ResultString(JpegDecoderResult result);
+
+/**
  * @brief 从 SD 卡读取 JPEG 文件并直接显示到 LCD
  * @param path JPEG 文件路径，例如 "0:/Picture/demo.jpg"
- * @param x 图片左上角目标 X 坐标
- * @param y 图片左上角目标 Y 坐标
+ * @param x 预览区域左上角 X 坐标
+ * @param y 预览区域左上角 Y 坐标
+ * @param width 预览区域宽度
+ * @param height 预览区域高度
  * @return JpegDecoderResult 执行结果
  * @details
  * 当前第一版 JPEG 路径的策略如下：
  * 1. 使用 TJpgDec 做软件解码；
  * 2. 输入源来自 FATFS 文件；
  * 3. 输出格式固定为 RGB565，便于直接写 LCD；
- * 4. 图片超出屏幕时仅做裁剪，不做缩放；
- * 5. 当前主要支持基线 JPEG，不保证渐进式 JPEG 可用。
+ * 4. 大图优先利用 TJpgDec 自带缩放级别缩小到预览区域附近；
+ * 5. 缩小后的结果在预览区域中居中显示；
+ * 6. 当前主要支持基线 JPEG，不保证渐进式 JPEG 可用。
  */
-JpegDecoderResult JpegDecoder_ShowFile(const char *path, uint16_t x, uint16_t y);
+JpegDecoderResult JpegDecoder_ShowFile(const char *path, uint16_t x, uint16_t y, uint16_t width, uint16_t height);
 
 #endif

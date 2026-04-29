@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build a general-purpose SD card file browser in the current STM32F407 project that can enter arbitrary directories, show a `[..]` parent item, open regular files, and preview both `.bmp` and `.jpg/.jpeg` images on the LCD.
+**Goal:** Build a general-purpose SD card file browser in the current STM32F407 project that can enter arbitrary directories, show a `[..]` parent item, open regular files, and preview both `.bmp` and `.jpg/.jpeg` images on the LCD. Large images should be scaled down proportionally and centered in the LCD preview area.
 
-**Architecture:** Keep file-system browsing state inside the existing `Library/ui` common layer so the list page, key dispatch layer, and view page all share the same current path. Use a single current-directory model plus virtual `[..]` entry generation instead of a special `Picture` mode, so directory navigation stays generic while image preview is handled by a dedicated picture module that supports `.bmp` and `.jpg/.jpeg`.
+**Architecture:** Keep file-system browsing state inside the existing `Library/ui` common layer so the list page, key dispatch layer, and view page all share the same current path. Use a single current-directory model plus virtual `[..]` entry generation instead of a special `Picture` mode, so directory navigation stays generic while image preview is handled by a dedicated picture module that supports `.bmp` and `.jpg/.jpeg`. Add a shared preview-layout layer that computes aspect-ratio-preserving fit and center placement for both BMP and JPG/JPEG.
 
 **Tech Stack:** STM32F407, SDIO, FATFS, existing `Library/ui`, existing LCD driver in `Library/tftlcd`, existing picture display module in `Library/Picture`, newly integrated lightweight software JPEG decoder, CMake-based embedded build.
 
@@ -73,9 +73,11 @@ Main-page key behavior must remain unchanged except that `KEY0` still enters the
 
 1. `.bmp` files are previewed as images.
 2. `.jpg` and `.jpeg` files are also previewed as images.
-3. Other files use the current text/hex preview logic.
-4. `KEY0` always closes the view page and returns to the current directory list.
-5. Existing `KEY2` close behavior may be retained only if it does not conflict with the new browser flow.
+3. Image preview should preserve the original aspect ratio, scale large images down to fit the preview area, and center the result with blank margins if needed.
+4. Small images should not be enlarged in the first version; they should be displayed at original size and centered in the preview area.
+5. Other files use the current text/hex preview logic.
+6. `KEY0` always closes the view page and returns to the current directory list.
+7. Existing `KEY2` close behavior may be retained only if it does not conflict with the new browser flow.
 
 ---
 
@@ -237,7 +239,7 @@ Expected result:
 - Modify: `Library/Picture/picture_display.c`
 - Modify: `CMakeLists.txt`
 
-- [ ] **Step 1: Integrate a lightweight software JPEG decoder suitable for STM32F407**
+- [x] **Step 1: Integrate a lightweight software JPEG decoder suitable for STM32F407**
 
 Requirements:
 - software decoder, no dependency on STM32 hardware JPEG block
@@ -249,7 +251,7 @@ First-version scope:
 - no progressive JPEG guarantee in first version
 - no PNG/GIF support in this task
 
-- [ ] **Step 2: Define a JPEG decode bridge that outputs pixels in a form the LCD path can consume**
+- [x] **Step 2: Define a JPEG decode bridge that outputs pixels in a form the LCD path can consume**
 
 Responsibilities:
 - accept FATFS-backed file input
@@ -257,7 +259,7 @@ Responsibilities:
 - provide pixel blocks, rows, or rectangles to the picture display layer
 - convert decoded color output to `RGB565` before LCD write when needed
 
-- [ ] **Step 3: Extend the picture display API to support both BMP and JPG**
+- [x] **Step 3: Extend the picture display API to support both BMP and JPG**
 
 Planned direction:
 
@@ -282,7 +284,7 @@ Rules:
 - add `Picture_ShowJPG()` for direct JPEG support
 - add a unified `Picture_Show()` entry if integration becomes cleaner
 
-- [ ] **Step 4: Implement first-version JPEG display behavior**
+- [x] **Step 4: Implement first-version JPEG display behavior**
 
 Rules:
 - support `.jpg` and `.jpeg`
@@ -290,7 +292,7 @@ Rules:
 - first version may crop like the current BMP path if scaling is not yet added
 - keep explicit error returns for unsupported JPEG variants or decode failures
 
-- [ ] **Step 5: Add the new JPEG sources to the build system**
+- [x] **Step 5: Add the new JPEG sources to the build system**
 
 Update:
 - `CMakeLists.txt`
@@ -360,6 +362,70 @@ Expected result:
 - colors are reasonable
 - `KEY0` closes preview and returns to `Picture` directory list
 
+### Task 7: Add Proportional Image Scaling and Centered Preview
+
+**Files:**
+- Modify: `Library/Picture/picture_display.h`
+- Modify: `Library/Picture/picture_display.c`
+- Modify: `Library/Picture/jpeg_decoder.h`
+- Modify: `Library/Picture/jpeg_decoder.c`
+- Modify: `Library/ui/ui_view.c`
+- Modify: `Library/Picture/README.md`
+- Modify: `docs/superpowers/plans/2026-04-23-sd-image-display.md`
+
+- [x] **Step 1: Define a shared preview-area layout model**
+
+Requirements:
+- use the current image preview region in the view page as the destination area
+- compute destination width and height that fit within the preview area
+- preserve the original image aspect ratio
+- do not enlarge images that are already smaller than the preview area
+- compute centered destination coordinates so blank margins are balanced
+
+- [x] **Step 2: Apply proportional scaling to BMP preview**
+
+Requirements:
+- keep BMP file parsing and FATFS streaming behavior
+- add nearest-neighbor downscaling in the BMP rendering path
+- avoid full-frame image buffering
+- allow large BMP images to be reduced to fit the preview area
+- keep small BMP images at original size and center them
+
+- [x] **Step 3: Apply proportional scaling to JPG/JPEG preview**
+
+Requirements:
+- keep TJpgDec as the JPEG runtime decoder
+- use TJpgDec scale levels (`1/1`, `1/2`, `1/4`, `1/8`) to reduce decode cost when possible
+- choose the largest TJpgDec output that still fits or comes closest to the preview area
+- center the resulting image in the preview area
+- first version may accept coarse scaling steps for JPEG rather than arbitrary resampling
+
+- [x] **Step 4: Clear the preview background before drawing the scaled image**
+
+Requirements:
+- image preview should not leave stale pixels from a previously displayed image
+- blank margins around the centered image should appear clean and intentional
+
+- [ ] **Step 5: Verify scaling behavior manually**
+
+Manual verification:
+1. test a BMP larger than the preview area
+2. test a JPG larger than the preview area
+3. confirm both images are scaled down without distortion
+4. confirm both images are centered
+5. test a small image and confirm it is not enlarged
+
+Expected result:
+- large images fit fully within the preview area
+- aspect ratio remains correct
+- small images remain sharp at original size
+- margins are white and stable
+
+Status note:
+- BMP proportional scaling has been implemented and verified on device
+- JPG/JPEG centered proportional preview has been implemented
+- runtime JPEG failure cause is now surfaced on the preview line, including `JPG UNSUP`, `JPG NOMEM`, and `JPG FORMAT`
+
 - [ ] **Step 5: Verify regular file preview from multiple directories**
 
 Manual verification:
@@ -372,20 +438,21 @@ Manual verification:
 Expected result:
 - each file returns to the directory it came from
 
-### Task 7: Update Documentation to Match the Browser Model and Dual-Format Support
+### Task 8: Update Documentation to Match the Browser Model, Dual-Format Support, and Scaling Behavior
 
 **Files:**
 - Modify: `Library/Picture/README.md`
 - Modify: `docs/superpowers/plans/2026-04-23-sd-image-display.md`
 
-- [ ] **Step 1: Remove outdated single-format wording**
+- [x] **Step 1: Remove outdated single-format wording**
 
 Replace it with:
 - browser starts from `0:/`
 - image preview is triggered by file type, not by a special browsing mode
 - current runtime image formats are `.bmp` and `.jpg/.jpeg`
+- large images are scaled down proportionally and centered in the preview area
 
-- [ ] **Step 2: Document the new key behavior**
+- [x] **Step 2: Document the new key behavior**
 
 Document:
 - `KEY0` on main page -> browser
@@ -393,11 +460,11 @@ Document:
 - `KEY2` -> enter directory / parent / open file
 - `KEY0` on view page -> back to list
 
-- [ ] **Step 3: Document current scope limits**
+- [x] **Step 3: Document current scope limits**
 
 Keep explicit limitations:
 - `.bmp` and `.jpg/.jpeg` are the only runtime image preview formats in the current version
-- no scaling
+- no image upscaling in the first version
 - no PNG runtime decode
 - no GIF runtime decode
 - no thumbnail cache
@@ -410,6 +477,7 @@ Spec coverage:
 - covers unified `KEY2` action for parent, directory, and file
 - covers `KEY0` behavior separation between list page and view page
 - covers BMP/JPG preview as file-type branches rather than a special picture mode
+- covers aspect-ratio-preserving downscaling and centered preview placement
 
 Placeholder scan:
 - no `TODO`

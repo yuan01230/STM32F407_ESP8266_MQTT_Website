@@ -8,47 +8,105 @@
  * @file jpeg_decoder.c
  * @brief 基于 TJpgDec 的 JPEG 运行时解码与 LCD 显示封装
  * @details
- * 当前模块的职责是把 FATFS 文件读取、TJpgDec 解码和 LCD 输出桥接起来。
- * 整体数据流如下：
- * 1. FATFS 从 SD 卡读取 JPEG 压缩数据；
- * 2. TJpgDec 解析 JPEG 段并输出 RGB565 像素块；
- * 3. 输出回调按矩形块逐行写入 LCD；
- * 4. 超出屏幕的像素仅裁剪，不额外缩放。
+ * 当前模块负责把 FATFS、TJpgDec 和 LCD 输出连接起来。
+ * 第一版缩放策略如下：
+ * 1. 优先使用 TJpgDec 自带的 1/1、1/2、1/4、1/8 缩放级别；
+ * 2. 只对大图做缩小，小图保持原尺寸；
+ * 3. 缩放后在预览区域内居中显示；
+ * 4. 不做额外的软件插值放大。
  */
 
-/** JPEG 解码工作区大小，包含 TJpgDec 所需的输入缓冲和 MCU 工作区。 */
+/** JPEG 解码工作区大小，包含 TJpgDec 输入缓冲和 MCU 工作区。 */
 #define JPEG_WORK_POOL_SIZE (16U * 1024U)
 
 /**
- * @brief 单次 JPEG 显示会话上下文
+ * @brief 单次 JPEG 显示会话的上下文
  * @details
- * TJpgDec 的输入回调和输出回调都只能拿到 JDEC 指针，
- * 因此需要通过 device 字段把当前文件和 LCD 目标位置传进去。
+ * TJpgDec 的输入/输出回调都只能拿到 JDEC 指针，
+ * 因此通过 device 字段传递当前文件和目标显示参数。
  */
 typedef struct
 {
     /** 已打开的 JPEG 文件对象。 */
     FIL *file;
-    /** 图片左上角目标 X 坐标。 */
-    uint16_t lcd_x;
-    /** 图片左上角目标 Y 坐标。 */
-    uint16_t lcd_y;
+    /** 实际绘制起点 X 坐标。 */
+    uint16_t draw_x;
+    /** 实际绘制起点 Y 坐标。 */
+    uint16_t draw_y;
 } JpegDecoderContext;
 
-/** JPEG 解码工作区使用静态缓冲，避免在 MCU 上引入动态内存分配。 */
+/** 使用静态工作区，避免 MCU 端引入动态内存分配。 */
 static uint8_t g_jpeg_work_pool[JPEG_WORK_POOL_SIZE];
 
 /**
- * @brief 把 FATFS 读文件接口适配为 TJpgDec 输入回调
+ * @brief 计算指定 TJpgDec 缩放级别后的输出尺寸
+ * @param src 源尺寸
+ * @param scale TJpgDec 缩放级别，0~3 分别表示 1/1、1/2、1/4、1/8
+ * @return uint16_t 缩放后的尺寸
+ * @details
+ * TJpgDec 的缩放本质是按 2 的幂做降采样。
+ * 为了避免向下截断后出现 0，这里使用向上取整。
+ */
+static uint16_t JpegDecoder_ScaledSize(uint16_t src, uint8_t scale)
+{
+    return (uint16_t)((src + ((1U << scale) - 1U)) >> scale);
+}
+
+/**
+ * @brief 为 JPEG 选择最合适的 TJpgDec 缩放级别
+ * @param src_width 源图宽度
+ * @param src_height 源图高度
+ * @param max_width 预览区域宽度
+ * @param max_height 预览区域高度
+ * @param out_width 输出显示宽度
+ * @param out_height 输出显示高度
+ * @return uint8_t 选择出的 TJpgDec 缩放级别
+ * @details
+ * 选择原则：
+ * 1. 如果原图已经能放进预览区域，则不缩放；
+ * 2. 否则选择“第一个能完整放入预览区域”的缩放级别；
+ * 3. 如果 1/8 仍然放不下，则退化为 1/8，并由 LCD 再做边界裁剪。
+ */
+static uint8_t JpegDecoder_SelectScale(uint16_t src_width,
+                                       uint16_t src_height,
+                                       uint16_t max_width,
+                                       uint16_t max_height,
+                                       uint16_t *out_width,
+                                       uint16_t *out_height)
+{
+    uint8_t scale;
+
+    if (src_width <= max_width && src_height <= max_height)
+    {
+        *out_width = src_width;
+        *out_height = src_height;
+        return 0U;
+    }
+
+    for (scale = 1U; scale <= 3U; scale++)
+    {
+        uint16_t scaled_width = JpegDecoder_ScaledSize(src_width, scale);
+        uint16_t scaled_height = JpegDecoder_ScaledSize(src_height, scale);
+
+        if (scaled_width <= max_width && scaled_height <= max_height)
+        {
+            *out_width = scaled_width;
+            *out_height = scaled_height;
+            return scale;
+        }
+    }
+
+    *out_width = JpegDecoder_ScaledSize(src_width, 3U);
+    *out_height = JpegDecoder_ScaledSize(src_height, 3U);
+    return 3U;
+}
+
+/**
+ * @brief FATFS 输入回调，适配 TJpgDec 的输入接口
  * @param jd TJpgDec 解码对象
  * @param buf 输出缓冲区；为 NULL 时表示仅跳过数据
  * @param len 请求读取或跳过的字节数
  * @return size_t 实际处理的字节数
- * @details
- * TJpgDec 约定：
- * 1. buf != NULL 时，回调需要把数据读入 buf；
- * 2. buf == NULL 时，回调只需要跳过 len 字节。
- * 这里通过 FATFS 的 f_read / f_lseek 实现这两种行为。
  */
 static size_t JpegDecoder_Input(JDEC *jd, uint8_t *buf, size_t len)
 {
@@ -86,18 +144,16 @@ static size_t JpegDecoder_Input(JDEC *jd, uint8_t *buf, size_t len)
 }
 
 /**
- * @brief 将 TJpgDec 输出的 RGB565 矩形块裁剪后写入 LCD
+ * @brief 将 TJpgDec 输出的 RGB565 像素块写入 LCD
  * @param jd TJpgDec 解码对象
- * @param bitmap TJpgDec 输出的像素块首地址，当前配置下为 RGB565
- * @param rect 当前像素块在源图中的矩形位置
- * @return int 1 表示继续解码，0 表示中断
+ * @param bitmap TJpgDec 输出的 RGB565 像素块
+ * @param rect 当前像素块在“缩放后图像坐标系”中的矩形位置
+ * @return int 1=继续解码，0=中断
  * @details
- * TJpgDec 会按 MCU 块回调输出，不一定是一整行或整图。
- * 这里的处理步骤是：
- * 1. 计算当前块映射到 LCD 后的目标坐标；
- * 2. 如果完全在屏幕外，则跳过该块；
- * 3. 如果部分超出，则只保留可见宽高；
- * 4. 逐行设置 LCD 窗口并输出 RGB565 像素。
+ * 当前 JPEG 缩放已经在 TJpgDec 内部完成，所以这里不再做额外缩放，
+ * 只负责：
+ * 1. 把缩放后的图像整体平移到居中坐标；
+ * 2. 对超出 LCD 边界的少量像素做裁剪。
  */
 static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
 {
@@ -107,10 +163,10 @@ static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
     uint16_t block_height;
     uint16_t draw_width;
     uint16_t draw_height;
-    uint16_t row;
-    uint16_t col;
     uint16_t target_x;
     uint16_t target_y;
+    uint16_t row;
+    uint16_t col;
 
     if (jd == NULL || jd->device == NULL || bitmap == NULL || rect == NULL)
     {
@@ -120,12 +176,11 @@ static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
     ctx = (JpegDecoderContext *)jd->device;
     pixels = (uint16_t *)bitmap;
 
-    target_x = (uint16_t)(ctx->lcd_x + rect->left);
-    target_y = (uint16_t)(ctx->lcd_y + rect->top);
+    target_x = (uint16_t)(ctx->draw_x + rect->left);
+    target_y = (uint16_t)(ctx->draw_y + rect->top);
     block_width = (uint16_t)(rect->right - rect->left + 1U);
     block_height = (uint16_t)(rect->bottom - rect->top + 1U);
 
-    /* 当前块如果完全落在屏幕外，直接跳过并继续解码后续块。 */
     if (target_x >= tftlcd_data.width || target_y >= tftlcd_data.height)
     {
         return 1;
@@ -147,10 +202,10 @@ static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
     {
         const uint16_t *row_pixels = &pixels[row * block_width];
 
-        LCD_Set_Window(target_x, (uint16_t)(target_y + row),
+        LCD_Set_Window(target_x,
+                       (uint16_t)(target_y + row),
                        (uint16_t)(target_x + draw_width - 1U),
                        (uint16_t)(target_y + row));
-
         for (col = 0; col < draw_width; col++)
         {
             LCD_WriteData_Color(row_pixels[col]);
@@ -161,12 +216,9 @@ static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
 }
 
 /**
- * @brief 将 TJpgDec 的返回码映射为模块内部状态码
+ * @brief 把 TJpgDec 返回码映射为工程内部状态码
  * @param result TJpgDec 返回码
- * @return JpegDecoderResult 映射后的 JPEG 显示结果
- * @details
- * 这里把第三方库的错误语义压缩成工程内部更容易理解的状态集合，
- * 便于上层 UI 统一处理。
+ * @return JpegDecoderResult 工程内部状态码
  */
 static JpegDecoderResult JpegDecoder_MapResult(JRESULT result)
 {
@@ -190,20 +242,35 @@ static JpegDecoderResult JpegDecoder_MapResult(JRESULT result)
     }
 }
 
-JpegDecoderResult JpegDecoder_ShowFile(const char *path, uint16_t x, uint16_t y)
+JpegDecoderResult JpegDecoder_ShowFile(const char *path,
+                                       uint16_t x,
+                                       uint16_t y,
+                                       uint16_t width,
+                                       uint16_t height)
 {
     FIL file;
     JDEC decoder;
     JRESULT result;
     JpegDecoderContext context;
     FRESULT fres;
+    uint16_t box_width;
+    uint16_t box_height;
+    uint16_t draw_width;
+    uint16_t draw_height;
+    uint8_t scale;
 
-    /* 坐标合法性先由本模块兜底，避免进入解码后再发现输出越界。 */
     if (path == NULL)
     {
         return JPEG_DECODER_ERR_OPEN;
     }
-    if (x >= tftlcd_data.width || y >= tftlcd_data.height)
+    if (x >= tftlcd_data.width || y >= tftlcd_data.height || width == 0U || height == 0U)
+    {
+        return JPEG_DECODER_ERR_RANGE;
+    }
+
+    box_width = (uint16_t)(((uint32_t)(tftlcd_data.width - x) < width) ? (tftlcd_data.width - x) : width);
+    box_height = (uint16_t)(((uint32_t)(tftlcd_data.height - y) < height) ? (tftlcd_data.height - y) : height);
+    if (box_width == 0U || box_height == 0U)
     {
         return JPEG_DECODER_ERR_RANGE;
     }
@@ -215,10 +282,10 @@ JpegDecoderResult JpegDecoder_ShowFile(const char *path, uint16_t x, uint16_t y)
     }
 
     context.file = &file;
-    context.lcd_x = x;
-    context.lcd_y = y;
+    context.draw_x = x;
+    context.draw_y = y;
 
-    /* 先解析 JPEG 结构、量化表和 Huffman 表，建立解码会话。 */
+    /* 先解析 JPEG 头部，拿到原始宽高后再决定使用哪个缩放级别。 */
     result = jd_prepare(&decoder, JpegDecoder_Input,
                         g_jpeg_work_pool, sizeof(g_jpeg_work_pool),
                         &context);
@@ -228,8 +295,36 @@ JpegDecoderResult JpegDecoder_ShowFile(const char *path, uint16_t x, uint16_t y)
         return JpegDecoder_MapResult(result);
     }
 
-    /* 当前第一版不做缩放，scale=0 表示按原始像素尺寸输出。 */
-    result = jd_decomp(&decoder, JpegDecoder_Output, 0U);
+    scale = JpegDecoder_SelectScale(decoder.width, decoder.height,
+                                    box_width, box_height,
+                                    &draw_width, &draw_height);
+    context.draw_x = (uint16_t)(x + (uint16_t)((box_width - draw_width) / 2U));
+    context.draw_y = (uint16_t)(y + (uint16_t)((box_height - draw_height) / 2U));
+
+    result = jd_decomp(&decoder, JpegDecoder_Output, scale);
     (void)f_close(&file);
     return JpegDecoder_MapResult(result);
+}
+
+const char *JpegDecoder_ResultString(JpegDecoderResult result)
+{
+    switch (result)
+    {
+        case JPEG_DECODER_OK:
+            return "JPG OK";
+        case JPEG_DECODER_ERR_OPEN:
+            return "JPG OPEN";
+        case JPEG_DECODER_ERR_FORMAT:
+            return "JPG FORMAT";
+        case JPEG_DECODER_ERR_READ:
+            return "JPG READ";
+        case JPEG_DECODER_ERR_UNSUPPORTED:
+            return "JPG UNSUP";
+        case JPEG_DECODER_ERR_RANGE:
+            return "JPG RANGE";
+        case JPEG_DECODER_ERR_NOMEM:
+            return "JPG NOMEM";
+        default:
+            return "JPG ERR";
+    }
 }
