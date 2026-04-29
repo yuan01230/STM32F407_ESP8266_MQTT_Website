@@ -5,6 +5,13 @@
 #include "../tftlcd/tftlcd.h"
 #include "ui_common.h"
 
+/*
+ * 说明：
+ * - 本文件只负责文件列表页。
+ * - 列表页既要展示目录和文件，又要尽量减少闪屏，所以采用“整页重绘 + 局部刷新”混合策略。
+ * - 当前目录路径、条目缓存和选中索引都由 ui_common 层维护，这里只读取并显示。
+ */
+
 /* ============================================================
  * File List Module (ui_list.c)
  * - 负责文件列表页面绘制
@@ -73,6 +80,16 @@ static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected)
  * 功能：根据状态选择整页或局部刷新，显示文件列表与倒计时。
  * 输入：文件缓存、选中项、分页窗口、倒计时状态。
  * 输出：列表页可见区域更新到 LCD。
+ */
+/**
+ * @brief 文件列表页显示入口
+ * @details
+ * 本函数会根据当前状态决定采用哪种刷新方式：
+ * 1. 首次进入或目录变化时，整页重绘；
+ * 2. 仅选中项变化时，只重绘旧选中行和新选中行；
+ * 3. 仅倒计时变化时，只刷新底部倒计时区域。
+ *
+ * 这样做的主要原因是 LCD 全屏重绘成本高，局部刷新能明显减轻闪烁。
  */
 void UI_ListPage_Show(void)
 {
@@ -187,6 +204,12 @@ void UI_ListPage_Show(void)
  * 功能：选中项 +1，超出末尾后回到首项。
  * 输出：更新 g_selected_index 与 g_list_top_index。
  */
+/**
+ * @brief 列表选中项向下移动
+ * @details
+ * 当选中项到达末尾时，采用循环方式回到首项。
+ * 同时会维护分页窗口顶部索引，确保当前选中项始终落在可见区域内。
+ */
 void UI_List_SelectDown(void)
 {
     if (g_file_count > 0U)
@@ -209,6 +232,12 @@ void UI_List_SelectDown(void)
  * @details
  * 功能：选中项 -1，到首项前回绕到末项。
  * 输出：更新 g_selected_index 与 g_list_top_index。
+ */
+/**
+ * @brief 列表选中项向上移动
+ * @details
+ * 当选中项在首项时，采用循环方式跳到最后一项。
+ * 同时会同步调整分页窗口顶部索引，保证高亮项可见。
  */
 void UI_List_SelectUp(void)
 {

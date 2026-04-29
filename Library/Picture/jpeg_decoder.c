@@ -4,6 +4,15 @@
 #include "tjpgd.h"
 #include "../tftlcd/tftlcd.h"
 
+/*
+ * 说明：
+ * - 本文件负责把 TJpgDec 适配到当前工程。
+ * - 它解决三个问题：
+ *   1. 如何从 FATFS 文件给 TJpgDec 持续喂数据；
+ *   2. 如何把 TJpgDec 解码出的像素块输出到 LCD；
+ *   3. 如何根据预览区域选择合适的缩放级别并做居中显示。
+ */
+
 /**
  * @file jpeg_decoder.c
  * @brief 基于 TJpgDec 的 JPEG 运行时解码与 LCD 显示封装
@@ -108,6 +117,15 @@ static uint8_t JpegDecoder_SelectScale(uint16_t src_width,
  * @param len 请求读取或跳过的字节数
  * @return size_t 实际处理的字节数
  */
+/**
+ * @brief TJpgDec 输入回调
+ * @details
+ * TJpgDec 通过这个回调从 FATFS 文件中读取 JPEG 数据。
+ * - `buf != NULL`：真正读取数据；
+ * - `buf == NULL`：仅跳过指定长度的数据。
+ *
+ * 这样做可以直接复用 FATFS 文件对象，而不需要先把整个 JPG 文件读入内存。
+ */
 static size_t JpegDecoder_Input(JDEC *jd, uint8_t *buf, size_t len)
 {
     JpegDecoderContext *ctx;
@@ -154,6 +172,15 @@ static size_t JpegDecoder_Input(JDEC *jd, uint8_t *buf, size_t len)
  * 只负责：
  * 1. 把缩放后的图像整体平移到居中坐标；
  * 2. 对超出 LCD 边界的少量像素做裁剪。
+ */
+/**
+ * @brief TJpgDec 输出回调
+ * @details
+ * TJpgDec 每次解码出一个 RGB565 像素块后，都会调用本回调。
+ * 当前处理流程是：
+ * 1. 计算当前像素块在 LCD 上的实际绘制坐标；
+ * 2. 对超出屏幕边界的区域做裁剪；
+ * 3. 将可见像素逐行写入 LCD。
  */
 static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
 {
@@ -220,6 +247,15 @@ static int JpegDecoder_Output(JDEC *jd, void *bitmap, JRECT *rect)
  * @param result TJpgDec 返回码
  * @return JpegDecoderResult 工程内部状态码
  */
+/**
+ * @brief 将 TJpgDec 返回码映射为工程内错误码
+ * @details
+ * 这一步的目的不是保留 TJpgDec 的全部细节，而是把错误压缩成上层更容易理解的几类：
+ * - 文件格式损坏
+ * - 编码标准不支持
+ * - 读取失败
+ * - 内存不足
+ */
 static JpegDecoderResult JpegDecoder_MapResult(JRESULT result)
 {
     switch (result)
@@ -242,6 +278,17 @@ static JpegDecoderResult JpegDecoder_MapResult(JRESULT result)
     }
 }
 
+/**
+ * @brief JPEG 文件显示总入口
+ * @details
+ * 该函数的执行顺序如下：
+ * 1. 检查预览区域参数；
+ * 2. 打开 JPEG 文件；
+ * 3. 先调用 `jd_prepare()` 解析头部，拿到原始宽高；
+ * 4. 根据预览区域选择合适的 TJpgDec 缩放级别；
+ * 5. 计算缩放后图像的居中坐标；
+ * 6. 调用 `jd_decomp()` 做实际解码并输出到 LCD。
+ */
 JpegDecoderResult JpegDecoder_ShowFile(const char *path,
                                        uint16_t x,
                                        uint16_t y,

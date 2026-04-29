@@ -4,6 +4,17 @@
 #include "jpeg_decoder.h"
 #include "../tftlcd/tftlcd.h"
 
+/*
+ * 说明：
+ * - 本文件是图片预览统一入口。
+ * - UI 层只需要调用 Picture_Show()，不需要自己区分 BMP 还是 JPG。
+ * - 模块内部会负责：
+ *   1. 识别扩展名；
+ *   2. 计算预览区域中的缩放与居中布局；
+ *   3. 调用具体格式的解码与显示路径；
+ *   4. 返回统一错误码给上层 UI。
+ */
+
 /**
  * @file picture_display.c
  * @brief 图片显示模块，负责 BMP/JPG 的统一预览入口
@@ -258,6 +269,18 @@ static void Picture_DrawRow(uint16_t x, uint16_t y, const uint16_t *row, uint16_
     }
 }
 
+/**
+ * @brief 统一图片预览入口
+ * @param path 图片完整路径
+ * @param x 预览区域左上角 X 坐标
+ * @param y 预览区域左上角 Y 坐标
+ * @param width 预览区域宽度
+ * @param height 预览区域高度
+ * @return PictureResult 统一图片结果码
+ * @details
+ * 该函数只做一件事：根据扩展名把请求分发给 BMP 或 JPG 处理函数。
+ * 这样 UI 层只关心“显示图片”，而不需要关心格式细节。
+ */
 PictureResult Picture_Show(const char *path,
                            uint16_t x,
                            uint16_t y,
@@ -283,6 +306,19 @@ PictureResult Picture_Show(const char *path,
     return PICTURE_ERR_UNSUPPORTED;
 }
 
+/**
+ * @brief 从 SD 卡读取 BMP 并显示到预览区域
+ * @details
+ * 当前 BMP 路径的主要步骤是：
+ * 1. 读取文件头和信息头；
+ * 2. 解析宽高、位深、压缩方式；
+ * 3. 计算图片在预览区域中的缩放后尺寸与居中位置；
+ * 4. 逐行读取源图像素；
+ * 5. 必要时做最近邻缩放；
+ * 6. 转换为 RGB565 后逐行写入 LCD。
+ *
+ * 这里采用逐行处理而不是整图加载，是为了控制 MCU RAM 占用。
+ */
 PictureResult Picture_ShowBMP(const char *path,
                               uint16_t x,
                               uint16_t y,
@@ -459,6 +495,12 @@ PictureResult Picture_ShowBMP(const char *path,
     return PICTURE_OK;
 }
 
+/**
+ * @brief 从 SD 卡读取 JPG/JPEG 并显示到预览区域
+ * @details
+ * JPG 路径本身不在这里直接解码，而是转交给 jpeg_decoder 模块。
+ * 本函数主要负责参数统一和错误码映射，使上层可以把 BMP/JPG 看成同一类图片能力。
+ */
 PictureResult Picture_ShowJPG(const char *path,
                               uint16_t x,
                               uint16_t y,

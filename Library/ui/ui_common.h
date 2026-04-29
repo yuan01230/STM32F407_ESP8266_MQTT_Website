@@ -2,115 +2,116 @@
 #define UI_COMMON_H
 
 #include <stdint.h>
+
 #include "../key/key.h"
 #include "ff.h"
 
 /**
  * @brief UI 页面枚举
+ * @details
+ * 当前工程的 UI 被拆成三个稳定页面：
+ * 1. 主页面：展示状态信息和按键入口；
+ * 2. 文件列表页：显示当前目录下的目录项和文件项；
+ * 3. 文件查看页：显示普通文件内容或图片预览结果。
  */
 typedef enum
 {
-    /** 主页面 */
     UI_PAGE_MAIN = 0,
-    /** 文件列表页面 */
     UI_PAGE_FILE_LIST,
-    /** 文件查看页面 */
     UI_PAGE_FILE_VIEW
 } UiPage_t;
 
 /**
- * @brief 文件列表项类型
+ * @brief 文件浏览器条目类型
  * @details
- * 当前文件浏览器中的每一项都必须明确自己的类型，
- * 这样列表页才能决定如何显示，按键处理层才能决定 KEY2 的行为。
+ * 为了让列表页和按键层知道“当前选中的是什么”，
+ * 每个条目都需要明确区分：
+ * - `[..]` 虚拟父目录项
+ * - FATFS 真实目录项
+ * - FATFS 普通文件项
  */
 typedef enum
 {
-    /** 虚拟父目录项，显示为 [..]，不来自 FATFS。 */
     UI_ENTRY_PARENT = 0,
-    /** 普通目录项，来自 FATFS。 */
     UI_ENTRY_DIR,
-    /** 普通文件项，来自 FATFS。 */
     UI_ENTRY_FILE
 } UiEntryType_t;
 
 /**
- * @brief 打开当前选中项后的结果类型
+ * @brief 打开列表项后的结果类型
  * @details
- * 列表页按下 KEY2 后，可能发生三种结果：
- * 1. 什么都没发生，例如索引无效；
- * 2. 目录已经切换成功，此时应刷新列表页；
- * 3. 当前项是文件，此时应进入查看页。
+ * 在列表页按下 `KEY2` 后，当前选中项可能触发三种结果：
+ * 1. 没有产生有效动作，例如索引越界；
+ * 2. 目录切换成功，需要刷新当前列表页；
+ * 3. 选中的是普通文件，需要进入查看页。
  */
 typedef enum
 {
-    /** 当前操作没有产生有效结果。 */
     UI_OPEN_RESULT_NONE = 0,
-    /** 已经完成目录切换，调用方应刷新列表页。 */
     UI_OPEN_RESULT_DIRECTORY,
-    /** 当前项是文件，调用方应进入查看页。 */
     UI_OPEN_RESULT_FILE
 } UiOpenResult_t;
 
 /**
- * @brief 文件项信息结构
+ * @brief 文件浏览器条目信息
+ * @details
+ * 当前结构同时服务于目录浏览和普通文件查看：
+ * - `name` 保存显示名称；
+ * - `ext` 保存扩展名，目录项可为空；
+ * - `size` 仅对普通文件有实际意义；
+ * - `type` 用于决定 `KEY2` 的动作。
  */
 typedef struct
 {
-    /** 文件名或目录名；父目录项固定为 ".."。 */
     char name[64];
-    /** 文件扩展名，不包含点号；目录项和父目录项可为空。 */
     char ext[16];
-    /** 文件大小，目录项和父目录项通常为 0。 */
     uint32_t size;
-    /** 是否目录，1 表示目录，0 表示普通文件。 */
     uint8_t is_dir;
-    /** 当前条目的类型，用于区分父项 / 目录 / 文件。 */
     UiEntryType_t type;
 } FileEntry_t;
 
-/** SD 卡字库路径 */
+/** SD 卡字库文件默认路径。 */
 #define FONT_SD_PATH "0:/Font/HZK16"
-/** KEY2 创建测试文件的 UTF-8 路径 */
+/** 测试文件默认路径，使用 UTF-8 文件名。 */
 #define TEST_FILE_PATH_UTF8 "0:/测试专用.txt"
-/** 浏览器根目录路径 */
+/** 文件浏览器根目录。 */
 #define UI_ROOT_DIR_PATH "0:/"
-/** 非主页面无操作自动返回主页面的超时，单位 ms */
+/** 非主页面无操作自动返回超时，单位毫秒。 */
 #define UI_AUTO_RETURN_MS 30000UL
-/** 列表最大缓存文件数 */
+/** 文件列表最大缓存条目数。 */
 #define MAX_FILE_ENTRIES 64U
-/** 列表页单页显示行数 */
+/** 列表页单页可见行数。 */
 #define FILE_LIST_PAGE_ROWS 11U
-/** 文件查看页最大读取字节数 */
+/** 文件查看页最大读取字节数。 */
 #define FILE_VIEW_READ_MAX 320U
-/** UI 内部统一使用的文件路径缓冲区长度 */
+/** 内部通用文件路径缓冲区长度。 */
 #define UI_FILE_PATH_MAX 80U
 
-/** SD 挂载状态，由主流程同步 */
+/** SD 卡是否已成功挂载。 */
 extern uint8_t g_sd_mounted;
-/** 主页面字体颜色模式 */
+/** 主页面测试字体颜色模式。 */
 extern uint8_t g_test_fg_mode;
-/** 当前 UI 页面 */
+/** 当前 UI 所在页面。 */
 extern UiPage_t g_ui_page;
-/** 最近一次按键时间戳 */
+/** 最近一次按键时间戳，用于自动返回计时。 */
 extern uint32_t g_ui_last_action_tick;
-/** 主页面显示的根目录条目总数 */
+/** 主页面上显示的根目录条目数量。 */
 extern uint16_t g_main_file_count;
-/** UI 秒级刷新去抖缓存 */
+/** UI 秒级刷新去抖缓存。 */
 extern uint32_t g_last_sec;
-/** 文件列表缓存数组 */
+/** 文件列表缓存。 */
 extern FileEntry_t g_file_entries[MAX_FILE_ENTRIES];
-/** 当前浏览器所在目录，例如 0:/、0:/Picture、0:/Picture/Sub */
+/** 当前浏览目录，例如 `0:/`、`0:/Picture`。 */
 extern char g_file_browse_path[UI_FILE_PATH_MAX];
-/** 当前已加载的列表项数量 */
+/** 当前目录已加载条目数。 */
 extern uint16_t g_file_count;
-/** 当前选中的文件索引 */
+/** 当前高亮选中条目索引。 */
 extern uint16_t g_selected_index;
-/** 当前列表页顶部索引 */
+/** 当前页面显示窗口顶部条目索引。 */
 extern uint16_t g_list_top_index;
-/** 当前查看页对应的文件索引 */
+/** 当前查看页对应的文件索引。 */
 extern uint16_t g_view_index;
-/** 文件列表页是否需要整页重绘 */
+/** 文件列表页是否需要整页重绘。 */
 extern uint8_t g_file_list_need_full_redraw;
 
 /**
@@ -121,95 +122,93 @@ void UI_EnterPage(UiPage_t page);
 
 /**
  * @brief 获取系统运行秒数
- * @retval 当前运行秒数
+ * @return 当前运行时间，单位秒
  */
 uint32_t UI_GetCurrentSeconds(void);
 
 /**
  * @brief 获取自动返回剩余秒数
- * @retval 剩余秒数，0 表示已超时
+ * @return 剩余秒数；为 0 表示已经超时
  */
 uint32_t UI_GetRemainSeconds(void);
 
 /**
- * @brief 统计根目录中的可见条目数量
- * @retval 条目数量
+ * @brief 统计根目录下的可见条目数量
+ * @return 条目数量
  * @details
- * 该接口保留原函数名，以兼容主页面现有调用点。
- * 统计对象包括根目录下的目录和普通文件，但不包含虚拟父目录项。
+ * 为兼容主页面的旧调用点，保留“RootFiles”命名。
+ * 实际统计对象包含根目录下的目录和普通文件，不包含 `[..]`。
  */
 uint16_t UI_CountRootFiles(void);
 
 /**
  * @brief 加载根目录列表到缓存
- * @retval 加载后的条目数量
+ * @return 加载后的条目数量
  * @details
- * 该接口保留原函数名，以兼容主页面进入文件列表的现有调用点。
- * 实际实现会调用通用目录加载函数并把当前目录切换为 0:/。
+ * 该接口会把浏览器当前目录重置为 `0:/`，再加载根目录内容。
  */
 uint16_t UI_LoadRootFileList(void);
 
 /**
  * @brief 加载指定目录到文件列表缓存
  * @param path 目标目录路径
- * @retval 1=成功，0=失败
+ * @return 1 表示成功，0 表示失败
  * @details
- * 该函数是通用文件浏览器的核心入口。
  * 成功后会同步更新：
- * 1. 当前目录路径；
- * 2. 列表条目缓存；
- * 3. 选中索引与分页窗口。
+ * - 当前浏览路径
+ * - 列表缓存
+ * - 当前选中索引
+ * - 列表页窗口位置
  */
 uint8_t UI_LoadDirectory(const char *path);
 
 /**
- * @brief 获取当前浏览器目录
- * @retval 当前目录路径
+ * @brief 获取当前浏览目录
+ * @return 当前目录字符串
  */
 const char *UI_GetCurrentDir(void);
 
 /**
  * @brief 判断当前目录是否为根目录
- * @retval 1=当前就是根目录，0=不是根目录
+ * @return 1 表示根目录，0 表示非根目录
  */
 uint8_t UI_IsRootDir(void);
 
 /**
  * @brief 打开当前选中条目
- * @retval UiOpenResult_t 打开结果
+ * @return UiOpenResult_t 打开结果
  * @details
- * 该接口只负责目录切换决策，不直接进入查看页。
- * 调用方根据返回值决定是刷新列表页还是切到查看页。
+ * 调用方根据返回值决定是刷新列表页，还是进入查看页。
  */
 UiOpenResult_t UI_OpenSelectedEntry(void);
 
 /**
- * @brief 根据当前目录和指定文件索引拼出完整文件路径
- * @param index 文件列表索引
- * @param out 输出路径缓冲区
+ * @brief 生成当前选中文件的完整路径
+ * @param index 文件索引
+ * @param out 输出缓冲区
  * @param out_cap 输出缓冲区容量
- * @retval 1=成功，0=失败
+ * @return 1 表示成功，0 表示失败
  * @details
- * 只有普通文件项才允许生成文件完整路径。
- * 父目录项和目录项调用该接口时会直接失败。
+ * 只有普通文件条目允许生成文件路径；
+ * `[..]` 和目录项调用本接口会直接失败。
  */
 uint8_t UI_BuildSelectedFilePath(uint16_t index, char *out, uint16_t out_cap);
 
 /**
- * @brief 判断缓冲区是否为有效 UTF-8 文本
+ * @brief 判断一段缓冲区是否为合法 UTF-8 文本
  * @param buf 输入缓冲区
  * @param len 输入长度
- * @retval 1=是有效 UTF-8 文本，0=否
+ * @return 1 表示合法，0 表示非法
  */
 uint8_t UI_IsValidUtf8(const uint8_t *buf, uint16_t len);
 
 /**
  * @brief 解码单个 UTF-8 码点
  * @param in 输入字节流
- * @param in_len 输入剩余长度
+ * @param in_len 可用输入长度
  * @param consumed 输出消耗字节数
  * @param codepoint 输出 Unicode 码点
- * @retval 1=成功，0=失败
+ * @return 1 表示成功，0 表示失败
  */
 uint8_t UI_Utf8DecodeCodepoint(const uint8_t *in, uint16_t in_len, uint16_t *consumed, uint32_t *codepoint);
 
@@ -219,7 +218,7 @@ uint8_t UI_Utf8DecodeCodepoint(const uint8_t *in, uint16_t in_len, uint16_t *con
  * @param in_len 输入长度
  * @param out 输出缓冲区
  * @param out_cap 输出缓冲区容量
- * @retval 1=成功得到输出，0=失败
+ * @return 1 表示成功，0 表示失败
  */
 uint8_t UI_Utf8ToGb2312(const uint8_t *in, uint16_t in_len, uint8_t *out, uint16_t out_cap);
 
@@ -228,18 +227,21 @@ uint8_t UI_Utf8ToGb2312(const uint8_t *in, uint16_t in_len, uint8_t *out, uint16
  * @param utf8 UTF-8 输入字符串
  * @param out 输出缓冲区
  * @param out_cap 输出缓冲区容量
- * @retval 1=转换成功，0=失败
+ * @return 1 表示成功，0 表示失败
  */
 uint8_t UI_TextUtf8ToGb2312(const char *utf8, uint8_t *out, uint16_t out_cap);
 
 /**
- * @brief 将 UTF-8 文本直接显示到 LCD，内部自动转 GB2312
+ * @brief 直接在 LCD 指定区域显示 UTF-8 文本
  * @param x 起始 X 坐标
  * @param y 起始 Y 坐标
- * @param width 显示宽度
- * @param height 显示高度
- * @param utf8 UTF-8 文本
+ * @param width 可显示宽度
+ * @param height 可显示高度
+ * @param utf8 UTF-8 输入字符串
+ * @details
+ * 内部会先把 UTF-8 转换为当前工程使用的 GB2312，再交给 LCD 显示层。
  */
 void UI_LCD_ShowUtf8(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const char *utf8);
 
 #endif
+
