@@ -165,9 +165,7 @@ void LCD_Set_Window(u16 sx,u16 sy,u16 width,u16 height)
 //杩斿洖鍊?姝ょ偣鐨勯鑹?u16 LCD_ReadPoint(u16 x,u16 y)
 u16 LCD_ReadPoint(u16 x,u16 y)
 {
- 	u16 r=0,g=0,b=0;
-	u16 r1,r2,r3;
-	u32 value;
+ 	u16 r=0,g=0;
 
 	if(x>=tftlcd_data.width||y>=tftlcd_data.height)return 0;	//瓒呰繃浜嗚寖鍥?鐩存帴杩斿洖
 	LCD_Set_Window(x, y, x, y);
@@ -187,7 +185,7 @@ u16 LCD_ReadPoint(u16 x,u16 y)
 	r=TFTLCD->LCD_DATA;
 	r=TFTLCD->LCD_DATA;
 	g=TFTLCD->LCD_DATA;
-	b=TFTLCD->LCD_DATA;
+	(void)TFTLCD->LCD_DATA;
 	r=r<<8|(g&0xff);
 #endif
 
@@ -418,7 +416,8 @@ void LCD_Color_Fill(u16 sx,u16 sy,u16 ex,u16 ey,u16 *color)
 {
 	u16 height,width;
 	u16 i,j;
-	width=ex-sx+1; 			//寰楀埌濉厖鐨勫搴?	height=ey-sy+1;			//楂樺害
+	width=ex-sx+1; 			// 寰楀埌濉厖鐨勫搴?
+	height=ey-sy+1;			// 楂樺害
 
 	for(i=0;i<height;i++)
 	{

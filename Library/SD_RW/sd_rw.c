@@ -136,7 +136,7 @@ static uint8_t SD_Create_Document(void)
     FIL file;
     UINT bytes_written;
     FRESULT res;
-    char doc_content[256];
+    char doc_content[384];
     RTC_TimeTypeDef sTime;
     RTC_DateTypeDef sDate;
     const char *filename = DEFAULT_DOC_FILENAME;
@@ -151,7 +151,7 @@ static uint8_t SD_Create_Document(void)
 
     printf("[Create Doc] Filename: %s\r\n", filename);
 
-    snprintf(doc_content, sizeof(doc_content),
+    (void)snprintf(doc_content, sizeof(doc_content),
              "=====================================\r\n"
              "  STM32F407 SDIO Create Document Demo\r\n"
              "=====================================\r\n\r\n"
@@ -165,7 +165,7 @@ static uint8_t SD_Create_Document(void)
              sTime.Hours, sTime.Minutes, sTime.Seconds,
              sDate.WeekDay, filename);
 
-    uint32_t len = strlen(doc_content);
+    uint32_t len = (uint32_t)strlen(doc_content);
 
     res = f_open(&file, filename, FA_CREATE_ALWAYS | FA_WRITE);
     if(res != FR_OK)
@@ -390,7 +390,7 @@ void LCD_Show_Create_Doc_Menu(void)
 
         FRONT_COLOR = BLACK;
         char disp_buf[64];
-        sprintf(disp_buf, "File: %s", latest_filename);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "File: %.57s", latest_filename);
         LCD_ShowString(10, 85, 220, 24, 24, (uint8_t*)disp_buf);
         LCD_ShowString(10, 120, 220, 24, 24, (uint8_t*)"Content: RTC Time");
     }
@@ -429,9 +429,9 @@ void LCD_Show_Read_Doc_Menu(void)
 
         FRONT_COLOR = BLACK;
         char disp_buf[128];
-        sprintf(disp_buf, "File: %s", latest_filename);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "File: %.57s", latest_filename);
         LCD_ShowString(10, 85, 300, 16, 16, (uint8_t*)disp_buf);
-        sprintf(disp_buf, "Size: %lu bytes", latest_read_size);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "Size: %lu bytes", latest_read_size);
         LCD_ShowString(10, 110, 300, 16, 16, (uint8_t*)disp_buf);
 
         uint16_t index = 0;
