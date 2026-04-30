@@ -67,12 +67,6 @@ static uint32_t FontStorage_Crc32Update(uint32_t crc, const uint8_t *data, uint3
     return crc;
 }
 
-/* 一次性 CRC32 接口（当前版本未直接使用，保留便于扩展） */
-static uint32_t FontStorage_Crc32(const uint8_t *data, uint32_t len)
-{
-    return FontStorage_Crc32Update(0xFFFFFFFFUL, data, len) ^ 0xFFFFFFFFUL;
-}
-
 /* 校验字库头是否合法（magic/version/size） */
 static uint8_t FontStorage_ValidateHeader(const FontStorageHeader *header)
 {

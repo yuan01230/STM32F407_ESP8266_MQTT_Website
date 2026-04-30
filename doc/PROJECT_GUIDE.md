@@ -121,3 +121,23 @@
 | 产品化阶段 | 可进一步转向 `RGB565` 原始资源，提高加载效率 |
 | 文档维护 | 保持根 `README.md` 负责总览，模块 `README` 负责细节 |
 
+
+## 10. 当前构建审计结果
+
+| 项目 | 结果 | 说明 |
+| --- | --- | --- |
+| 全工程构建 | 通过 | `cmake --build --preset Debug` 已成功链接 `1_LED.elf` |
+| 编译 warning | 0 | 已清理 `sd_rw.c`、`tftlcd.c`、`font.h`、`font_storage.c` 中已知 warning |
+| FLASH 占用 | `280316 B / 1 MB` | 约 `26.73%` |
+| RAM 占用 | `34320 B / 128 KB` | 约 `26.18%` |
+| 图片预览 | 已验证 | `BMP` 与受支持的 `Baseline JPG/JPEG` 可正常显示 |
+| JPEG 限制 | 保留 | 非基线 JPEG 仍可能显示 `JPG UNSUP`，这属于当前解码器能力边界 |
+
+### 10.1 Warning 清理结论
+
+| 文件 | 处理结果 | 说明 |
+| --- | --- | --- |
+| `Library/SD_RW/sd_rw.c` | 已清理 | 修正了字符串缓冲区长度和 `sprintf` 风险 |
+| `Library/tftlcd/tftlcd.c` | 已清理 | 修正了未使用变量和 `height` 未初始化风险 |
+| `Library/tftlcd/font.h` | 已清理 | 修正了字模结构初始化长度和花括号写法 |
+| `Library/font_storage/font_storage.c` | 已清理 | 删除了未使用的静态 CRC32 包装函数 |
