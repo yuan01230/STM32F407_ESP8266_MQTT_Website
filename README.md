@@ -100,4 +100,3 @@ cmake --build --preset Debug
 | 显示 | TFT LCD 并口屏 |
 | 存储 | `SD` 卡 + 外部 `W25Q128` |
 | 输入 | `KEY0 / KEY1 / KEY2 / KEY_UP` |
-
