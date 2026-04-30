@@ -1,5 +1,6 @@
 #include "ui_common.h"
 
+#include <stdio.h>
 #include <string.h>
 
 #include "../../Core/Inc/main.h"
@@ -9,75 +10,243 @@
 /* ============================================================
  * UI Common Layer (ui_common.c)
  * - 维护跨页面共享状态
- * - 提供文件列表缓存与编码转换基础能力
+ * - 提供通用文件浏览器状态与路径处理能力
+ * - 提供 UTF-8/GB2312 转换基础能力
  * ============================================================ */
 
-/* -------------------- static 前置声明区 -------------------- */
-/* 本文件无内部 static 函数 */
+/* -------------------- 当前文件内部辅助函数声明 -------------------- */
+static uint8_t UI_IsRootPath(const char *path);
+static uint8_t UI_CopyNormalizedPath(const char *src, char *dst, uint16_t dst_cap);
+static uint8_t UI_BuildPath(const char *base, const char *name, char *out, uint16_t out_cap);
+static uint8_t UI_BuildParentPath(const char *current, char *out, uint16_t out_cap);
+static uint16_t UI_CountEntriesInDirectory(const char *dir_path);
 
 /**
  * @file ui_common.c
  * @brief UI 底层公共层
  * @details
- * 存放跨页面共享状态与可复用基础函数：
- * - 页面状态与计时
- * - SD 根目录文件列表缓存
- * - UTF-8 识别与 UTF-8 -> GB2312 转换
+ * 本文件负责：
+ * 1. 维护跨页面共享状态；
+ * 2. 维护通用文件浏览器的当前目录；
+ * 3. 生成虚拟父目录项 `[..]`；
+ * 4. 为列表页、按键分发层、查看页提供统一的路径和目录操作；
+ * 5. 提供 UTF-8 识别与 UTF-8 -> GB2312 转换能力。
  */
 
 /* -------------------- 全局共享状态 -------------------- */
-/* 由 UI_SetSdMounted 写入；各页面读取显示/流程判断 */
 uint8_t g_sd_mounted = 0;
-/* 由 KEY1(主页面) 切换；主页面绘制函数读取决定字体颜色 */
 uint8_t g_test_fg_mode = 0;
-/* 当前页面状态，主要由 UI_EnterPage/UI_HandleKey 改变 */
 UiPage_t g_ui_page = UI_PAGE_MAIN;
-/* 最近一次用户操作时间戳，UI_Tick 用于计算 30s 超时返回 */
 uint32_t g_ui_last_action_tick = 0;
-/* 主页面显示用的 SD 根目录文件总数 */
 uint16_t g_main_file_count = 0;
-/* UI 秒级刷新节流变量，避免同一秒重复刷新 */
 uint32_t g_last_sec = 0xFFFFFFFFUL;
-/* 列表页文件缓存 */
 FileEntry_t g_file_entries[MAX_FILE_ENTRIES];
-/* 当前缓存中的文件数量 */
+char g_file_browse_path[UI_FILE_PATH_MAX] = UI_ROOT_DIR_PATH;
 uint16_t g_file_count = 0;
-/* 列表页当前选中项索引 */
 uint16_t g_selected_index = 0;
-/* 列表页当前窗口顶部索引（分页显示起点） */
 uint16_t g_list_top_index = 0;
-/* 查看页当前打开文件索引 */
 uint16_t g_view_index = 0;
-/* 列表页强制整页重绘标记，置 1 后下次 UI_ListPage_Show 做全量绘制 */
 uint8_t g_file_list_need_full_redraw = 1U;
 
 /**
- * @brief 页面切换公共入口
- * @param page 目标页面
- * @retval 无
+ * @brief 判断某个路径是否为根目录
+ * @param path 待判断路径
+ * @retval 1=根目录，0=非根目录
  * @details
- * 功能：统一处理页面切换时的公共状态更新。
- * 输入：目标页面枚举值。
- * 输出：更新当前页面、最后操作时间及必要重绘标志。
+ * 浏览器内部统一把根目录视为 `0:/`。
+ * 为了兼容外部可能传入的 `0:`，这里额外接受这两种等价写法。
+ */
+static uint8_t UI_IsRootPath(const char *path)
+{
+    if (path == NULL)
+    {
+        return 0U;
+    }
+
+    return (uint8_t)((strcmp(path, UI_ROOT_DIR_PATH) == 0) || (strcmp(path, "0:") == 0));
+}
+
+/**
+ * @brief 复制并规范化目录路径
+ * @param src 输入路径
+ * @param dst 输出缓冲区
+ * @param dst_cap 输出缓冲区容量
+ * @retval 1=成功，0=失败
+ * @details
+ * 规范化规则：
+ * 1. `0:` 会被转换为 `0:/`；
+ * 2. 非根目录路径末尾多余的 `/` 会被移除；
+ * 3. 根目录始终保持为 `0:/`。
+ */
+static uint8_t UI_CopyNormalizedPath(const char *src, char *dst, uint16_t dst_cap)
+{
+    size_t len;
+
+    if (src == NULL || dst == NULL || dst_cap == 0U)
+    {
+        return 0U;
+    }
+
+    if (strcmp(src, "0:") == 0)
+    {
+        return (uint8_t)(snprintf(dst, dst_cap, "%s", UI_ROOT_DIR_PATH) < (int)dst_cap);
+    }
+
+    if (snprintf(dst, dst_cap, "%s", src) >= (int)dst_cap)
+    {
+        return 0U;
+    }
+
+    len = strlen(dst);
+    while (len > strlen(UI_ROOT_DIR_PATH) && dst[len - 1U] == '/')
+    {
+        dst[len - 1U] = '\0';
+        len--;
+    }
+
+    if (UI_IsRootPath(dst))
+    {
+        (void)snprintf(dst, dst_cap, "%s", UI_ROOT_DIR_PATH);
+    }
+
+    return 1U;
+}
+
+/**
+ * @brief 由“目录路径 + 名称”拼出完整路径
+ * @param base 基础目录
+ * @param name 目录项名称
+ * @param out 输出缓冲区
+ * @param out_cap 输出缓冲区容量
+ * @retval 1=成功，0=失败
+ * @details
+ * 该函数同时服务于：
+ * 1. 进入子目录时拼目录路径；
+ * 2. 打开普通文件时拼文件路径。
+ */
+static uint8_t UI_BuildPath(const char *base, const char *name, char *out, uint16_t out_cap)
+{
+    size_t base_len;
+
+    if (base == NULL || name == NULL || out == NULL || out_cap == 0U)
+    {
+        return 0U;
+    }
+
+    base_len = strlen(base);
+    if (base_len > 0U && base[base_len - 1U] == '/')
+    {
+        return (uint8_t)(snprintf(out, out_cap, "%s%s", base, name) < (int)out_cap);
+    }
+
+    return (uint8_t)(snprintf(out, out_cap, "%s/%s", base, name) < (int)out_cap);
+}
+
+/**
+ * @brief 计算当前目录的父目录路径
+ * @param current 当前目录
+ * @param out 输出缓冲区
+ * @param out_cap 输出缓冲区容量
+ * @retval 1=成功，0=失败
+ * @details
+ * 规则如下：
+ * 1. 如果当前已经是根目录，则父目录仍然是根目录；
+ * 2. 如果当前在子目录，则删除最后一个路径段；
+ * 3. 删除后若退回盘符根，则统一写成 `0:/`。
+ */
+static uint8_t UI_BuildParentPath(const char *current, char *out, uint16_t out_cap)
+{
+    char temp[UI_FILE_PATH_MAX];
+    char *last_slash;
+
+    if (!UI_CopyNormalizedPath(current, temp, sizeof(temp)))
+    {
+        return 0U;
+    }
+
+    if (UI_IsRootPath(temp))
+    {
+        return (uint8_t)(snprintf(out, out_cap, "%s", UI_ROOT_DIR_PATH) < (int)out_cap);
+    }
+
+    last_slash = strrchr(temp, '/');
+    if (last_slash == NULL)
+    {
+        return (uint8_t)(snprintf(out, out_cap, "%s", UI_ROOT_DIR_PATH) < (int)out_cap);
+    }
+
+    if (last_slash <= &temp[2])
+    {
+        return (uint8_t)(snprintf(out, out_cap, "%s", UI_ROOT_DIR_PATH) < (int)out_cap);
+    }
+
+    *last_slash = '\0';
+    return UI_CopyNormalizedPath(temp, out, out_cap);
+}
+
+/**
+ * @brief 统计某个目录中的可见条目数量
+ * @param dir_path 目录路径
+ * @retval 条目数量
+ * @details
+ * 这里统计的是 FATFS 中真实存在的目录和文件。
+ * 不把 `.` 和 `..` 计入数量，也不在这里生成虚拟父目录项。
+ */
+static uint16_t UI_CountEntriesInDirectory(const char *dir_path)
+{
+    DIR dir;
+    FILINFO fno;
+    uint16_t count = 0;
+
+    if (dir_path == NULL || dir_path[0] == '\0')
+    {
+        return 0U;
+    }
+
+    if (f_opendir(&dir, dir_path) != FR_OK)
+    {
+        return 0U;
+    }
+
+    while (count < 0xFFFFU)
+    {
+        const char *src_name;
+
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == '\0')
+        {
+            break;
+        }
+
+        src_name = (fno.fname[0] != '\0') ? fno.fname : fno.altname;
+        if (strcmp(src_name, ".") == 0 || strcmp(src_name, "..") == 0)
+        {
+            continue;
+        }
+
+        count++;
+    }
+
+    (void)f_closedir(&dir);
+    return count;
+}
+
+/**
+ * @brief 进入指定页面并刷新无操作计时
+ * @param page 目标页面
  */
 void UI_EnterPage(UiPage_t page)
 {
-    /* 切页时统一刷新“最后操作时间”，用于超时返回计算 */
     g_ui_page = page;
     g_ui_last_action_tick = HAL_GetTick();
     if (page == UI_PAGE_FILE_LIST)
     {
-        /* 进入列表页时先整页绘制一次，避免残影 */
         g_file_list_need_full_redraw = 1U;
     }
 }
 
 /**
  * @brief 获取系统秒计数
- * @param 无
  * @retval 当前运行秒数
- * @details
- * 功能：为 UI 秒级刷新、运行时间显示提供时间基准。
  */
 uint32_t UI_GetCurrentSeconds(void)
 {
@@ -86,10 +255,7 @@ uint32_t UI_GetCurrentSeconds(void)
 
 /**
  * @brief 计算自动返回剩余秒数
- * @param 无
  * @retval 距离自动返回主页面的剩余秒数
- * @details
- * 功能：用于列表页/查看页底部倒计时显示。
  */
 uint32_t UI_GetRemainSeconds(void)
 {
@@ -102,107 +268,210 @@ uint32_t UI_GetRemainSeconds(void)
 }
 
 /**
- * @brief 统计根目录文件数
- * @param 无
- * @retval 普通文件数量（不含目录）
+ * @brief 统计根目录中的可见条目数量
+ * @retval 条目数量
  * @details
- * 功能：供主页面显示“SD Files”统计信息。
+ * 该接口供主页面显示使用，不应改变当前浏览器所在目录。
  */
 uint16_t UI_CountRootFiles(void)
 {
-    DIR dir;
-    FILINFO fno;
-    uint16_t count = 0;
-    if (!g_sd_mounted) return 0;
-    if (f_opendir(&dir, "0:/") != FR_OK) return 0;
-    while (count < 0xFFFFU)
+    if (!g_sd_mounted)
     {
-        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == '\0') break;
-        if ((fno.fattrib & AM_DIR) != 0U) continue;
-        count++;
+        return 0U;
     }
-    (void)f_closedir(&dir);
-    return count;
+
+    return UI_CountEntriesInDirectory(UI_ROOT_DIR_PATH);
 }
 
 /**
- * @brief 加载根目录文件列表
- * @param 无
- * @retval 实际加载的文件数量
+ * @brief 加载指定目录到文件列表缓存
+ * @param path 目标目录路径
+ * @retval 1=成功，0=失败
  * @details
- * 功能：刷新列表页数据源缓存。
- * 输入：SD 根目录文件系统状态。
- * 输出：更新 g_file_entries/g_file_count/g_selected_index/g_list_top_index。
+ * 该函数会完整重建当前列表：
+ * 1. 打开目标目录；
+ * 2. 根据是否为根目录决定是否插入 `[..]`；
+ * 3. 读取目录和文件项；
+ * 4. 刷新当前目录状态和列表索引。
  */
-uint16_t UI_LoadRootFileList(void)
+uint8_t UI_LoadDirectory(const char *path)
 {
     DIR dir;
     FILINFO fno;
-    uint16_t idx = 0;
+    char normalized_path[UI_FILE_PATH_MAX];
+    uint16_t idx = 0U;
+
     if (!g_sd_mounted)
     {
-        g_file_count = 0;
-        g_selected_index = 0;
-        g_list_top_index = 0;
-        return 0;
+        g_file_count = 0U;
+        g_selected_index = 0U;
+        g_list_top_index = 0U;
+        return 0U;
     }
 
-    if (f_opendir(&dir, "0:/") != FR_OK)
+    if (!UI_CopyNormalizedPath(path, normalized_path, sizeof(normalized_path)))
     {
-        g_file_count = 0;
-        return 0;
+        return 0U;
+    }
+
+    if (f_opendir(&dir, normalized_path) != FR_OK)
+    {
+        return 0U;
+    }
+
+    if (!UI_IsRootPath(normalized_path) && idx < MAX_FILE_ENTRIES)
+    {
+        memset(&g_file_entries[idx], 0, sizeof(g_file_entries[idx]));
+        strncpy(g_file_entries[idx].name, "..", sizeof(g_file_entries[idx].name) - 1U);
+        g_file_entries[idx].is_dir = 1U;
+        g_file_entries[idx].type = UI_ENTRY_PARENT;
+        idx++;
     }
 
     while (idx < MAX_FILE_ENTRIES)
     {
         const char *src_name;
         char *dot;
-        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == '\0') break;
-        if ((fno.fattrib & AM_DIR) != 0U) continue;
+
+        if (f_readdir(&dir, &fno) != FR_OK || fno.fname[0] == '\0')
+        {
+            break;
+        }
+
+        src_name = (fno.fname[0] != '\0') ? fno.fname : fno.altname;
+        if (strcmp(src_name, ".") == 0 || strcmp(src_name, "..") == 0)
+        {
+            continue;
+        }
 
         memset(&g_file_entries[idx], 0, sizeof(g_file_entries[idx]));
-        src_name = (fno.fname[0] != '\0') ? fno.fname : fno.altname;
         strncpy(g_file_entries[idx].name, src_name, sizeof(g_file_entries[idx].name) - 1U);
-        g_file_entries[idx].size = fno.fsize;
-        g_file_entries[idx].is_dir = 0U;
 
-        /* 从文件名中提取扩展名（不含点） */
-        dot = strrchr(g_file_entries[idx].name, '.');
-        if (dot != NULL && *(dot + 1) != '\0')
+        if ((fno.fattrib & AM_DIR) != 0U)
         {
-            strncpy(g_file_entries[idx].ext, dot + 1, sizeof(g_file_entries[idx].ext) - 1U);
+            /* 目录项只记录名称和类型，大小与扩展名在列表页中都不会使用。 */
+            g_file_entries[idx].is_dir = 1U;
+            g_file_entries[idx].type = UI_ENTRY_DIR;
         }
         else
         {
-            strncpy(g_file_entries[idx].ext, "N/A", sizeof(g_file_entries[idx].ext) - 1U);
+            /* 文件项保留大小和扩展名，供列表显示和文件类型判断使用。 */
+            g_file_entries[idx].size = fno.fsize;
+            g_file_entries[idx].is_dir = 0U;
+            g_file_entries[idx].type = UI_ENTRY_FILE;
+            dot = strrchr(g_file_entries[idx].name, '.');
+            if (dot != NULL && *(dot + 1) != '\0')
+            {
+                strncpy(g_file_entries[idx].ext, dot + 1, sizeof(g_file_entries[idx].ext) - 1U);
+            }
+            else
+            {
+                strncpy(g_file_entries[idx].ext, "N/A", sizeof(g_file_entries[idx].ext) - 1U);
+            }
         }
         idx++;
     }
+
     (void)f_closedir(&dir);
 
+    (void)snprintf(g_file_browse_path, sizeof(g_file_browse_path), "%s", normalized_path);
     g_file_count = idx;
-    /* 保证选中索引始终有效，避免列表为空/越界后显示异常 */
-    if (g_file_count == 0U)
-    {
-        g_selected_index = 0U;
-        g_list_top_index = 0U;
-    }
-    else if (g_selected_index >= g_file_count)
-    {
-        g_selected_index = 0U;
-        g_list_top_index = 0U;
-    }
-    return g_file_count;
+    g_selected_index = 0U;
+    g_list_top_index = 0U;
+    return 1U;
 }
 
 /**
- * @brief 判断缓冲区是否为 UTF-8
- * @param buf 输入字节缓冲区
- * @param len 缓冲区长度
- * @retval 1=有效 UTF-8，0=无效
- * @details
- * 功能：为文本显示分支选择提供依据。
+ * @brief 加载根目录列表到缓存
+ * @retval 加载后的条目数量
  */
+uint16_t UI_LoadRootFileList(void)
+{
+    return UI_LoadDirectory(UI_ROOT_DIR_PATH) ? g_file_count : 0U;
+}
+
+/**
+ * @brief 获取当前浏览器目录
+ * @retval 当前目录路径
+ */
+const char *UI_GetCurrentDir(void)
+{
+    return g_file_browse_path;
+}
+
+/**
+ * @brief 判断当前目录是否为根目录
+ * @retval 1=当前就是根目录，0=不是根目录
+ */
+uint8_t UI_IsRootDir(void)
+{
+    return UI_IsRootPath(g_file_browse_path);
+}
+
+/**
+ * @brief 打开当前选中条目
+ * @retval UiOpenResult_t 打开结果
+ * @details
+ * 该函数会根据当前选中项类型决定下一步动作：
+ * 1. `[..]` -> 计算父目录并装载父目录；
+ * 2. 目录项 -> 构造子目录路径并装载子目录；
+ * 3. 文件项 -> 不改目录状态，只通知调用方进入查看页。
+ */
+UiOpenResult_t UI_OpenSelectedEntry(void)
+{
+    char next_path[UI_FILE_PATH_MAX];
+
+    if (g_file_count == 0U || g_selected_index >= g_file_count)
+    {
+        return UI_OPEN_RESULT_NONE;
+    }
+
+    switch (g_file_entries[g_selected_index].type)
+    {
+        case UI_ENTRY_PARENT:
+            if (UI_BuildParentPath(g_file_browse_path, next_path, sizeof(next_path)) && UI_LoadDirectory(next_path))
+            {
+                return UI_OPEN_RESULT_DIRECTORY;
+            }
+            return UI_OPEN_RESULT_NONE;
+
+        case UI_ENTRY_DIR:
+            if (UI_BuildPath(g_file_browse_path, g_file_entries[g_selected_index].name, next_path, sizeof(next_path)) && UI_LoadDirectory(next_path))
+            {
+                return UI_OPEN_RESULT_DIRECTORY;
+            }
+            return UI_OPEN_RESULT_NONE;
+
+        case UI_ENTRY_FILE:
+            return UI_OPEN_RESULT_FILE;
+
+        default:
+            return UI_OPEN_RESULT_NONE;
+    }
+}
+
+/**
+ * @brief 根据当前目录和指定文件索引拼出完整文件路径
+ * @param index 文件列表索引
+ * @param out 输出路径缓冲区
+ * @param out_cap 输出缓冲区容量
+ * @retval 1=成功，0=失败
+ */
+uint8_t UI_BuildSelectedFilePath(uint16_t index, char *out, uint16_t out_cap)
+{
+    if (out == NULL || out_cap == 0U || index >= g_file_count)
+    {
+        return 0U;
+    }
+
+    if (g_file_entries[index].type != UI_ENTRY_FILE)
+    {
+        return 0U;
+    }
+
+    return UI_BuildPath(g_file_browse_path, g_file_entries[index].name, out, out_cap);
+}
+
 uint8_t UI_IsValidUtf8(const uint8_t *buf, uint16_t len)
 {
     uint16_t i = 0;
@@ -225,12 +494,12 @@ uint8_t UI_IsValidUtf8(const uint8_t *buf, uint16_t len)
 }
 
 /**
- * @brief 解码单个 UTF-8 码点
- * @param in 输入起始地址
- * @param in_len 可用输入长度
- * @param consumed 输出消耗字节数
- * @param codepoint 输出 Unicode 码点
- * @retval 1=解码成功，0=失败
+ * @brief 瑙ｇ爜鍗曚釜 UTF-8 鐮佺偣
+ * @param in 杈撳叆璧峰鍦板潃
+ * @param in_len 鍙敤杈撳叆闀垮害
+ * @param consumed 杈撳嚭娑堣€楀瓧鑺傛暟
+ * @param codepoint 杈撳嚭 Unicode 鐮佺偣
+ * @retval 1=瑙ｇ爜鎴愬姛锛?=澶辫触
  */
 uint8_t UI_Utf8DecodeCodepoint(const uint8_t *in, uint16_t in_len, uint16_t *consumed, uint32_t *codepoint)
 {
@@ -275,16 +544,11 @@ uint8_t UI_Utf8DecodeCodepoint(const uint8_t *in, uint16_t in_len, uint16_t *con
 }
 
 /**
- * @brief UTF-8 字节流转 GB2312
- * @param in UTF-8 输入缓冲区
- * @param in_len 输入长度
- * @param out 输出缓冲区
- * @param out_cap 输出缓冲区容量
- * @retval 1=有有效输出，0=转换失败
+ * @brief UTF-8 瀛楄妭娴佽浆 GB2312
+ * @param in UTF-8 杈撳叆缂撳啿鍖? * @param in_len 杈撳叆闀垮害
+ * @param out 杈撳嚭缂撳啿鍖? * @param out_cap 杈撳嚭缂撳啿鍖哄閲? * @retval 1=鏈夋湁鏁堣緭鍑猴紝0=杞崲澶辫触
  * @details
- * 功能：将 UTF-8 文本转换为 LCD/FatFs 兼容的 GB2312 字节流。
- * 说明：无法映射的字符统一输出 '?'。
- */
+ * 鍔熻兘锛氬皢 UTF-8 鏂囨湰杞崲涓?LCD/FatFs 鍏煎鐨?GB2312 瀛楄妭娴併€? * 璇存槑锛氭棤娉曟槧灏勭殑瀛楃缁熶竴杈撳嚭 '?'銆? */
 uint8_t UI_Utf8ToGb2312(const uint8_t *in, uint16_t in_len, uint8_t *out, uint16_t out_cap)
 {
     uint16_t i = 0;
@@ -331,11 +595,8 @@ uint8_t UI_Utf8ToGb2312(const uint8_t *in, uint16_t in_len, uint8_t *out, uint16
 }
 
 /**
- * @brief UTF-8 C 字符串转 GB2312
- * @param utf8 输入 UTF-8 字符串
- * @param out 输出 GB2312 缓冲区
- * @param out_cap 输出缓冲区容量
- * @retval 1=成功，0=失败
+ * @brief UTF-8 C 瀛楃涓茶浆 GB2312
+ * @param utf8 杈撳叆 UTF-8 瀛楃涓? * @param out 杈撳嚭 GB2312 缂撳啿鍖? * @param out_cap 杈撳嚭缂撳啿鍖哄閲? * @retval 1=鎴愬姛锛?=澶辫触
  */
 uint8_t UI_TextUtf8ToGb2312(const char *utf8, uint8_t *out, uint16_t out_cap)
 {
@@ -347,17 +608,13 @@ uint8_t UI_TextUtf8ToGb2312(const char *utf8, uint8_t *out, uint16_t out_cap)
 }
 
 /**
- * @brief 直接显示 UTF-8 字符串到 LCD
- * @param x 起始 X 坐标
- * @param y 起始 Y 坐标
- * @param width 显示区域宽度
- * @param height 显示区域高度
- * @param utf8 UTF-8 字符串
- * @retval 无
- * @details
- * 流程：UTF-8 -> GB2312 -> LCD_ShowTextMixed。
- * 若转换失败，回退到 LCD_ShowString 显示原串。
- */
+ * @brief 鐩存帴鏄剧ず UTF-8 瀛楃涓插埌 LCD
+ * @param x 璧峰 X 鍧愭爣
+ * @param y 璧峰 Y 鍧愭爣
+ * @param width 鏄剧ず鍖哄煙瀹藉害
+ * @param height 鏄剧ず鍖哄煙楂樺害
+ * @param utf8 UTF-8 瀛楃涓? * @retval 鏃? * @details
+ * 娴佺▼锛歎TF-8 -> GB2312 -> LCD_ShowTextMixed銆? * 鑻ヨ浆鎹㈠け璐ワ紝鍥為€€鍒?LCD_ShowString 鏄剧ず鍘熶覆銆? */
 void UI_LCD_ShowUtf8(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const char *utf8)
 {
     uint8_t gb[256];
@@ -374,3 +631,5 @@ void UI_LCD_ShowUtf8(uint16_t x, uint16_t y, uint16_t width, uint16_t height, co
         LCD_ShowString(x, y, width, height, 16, (uint8_t *)utf8);
     }
 }
+
+

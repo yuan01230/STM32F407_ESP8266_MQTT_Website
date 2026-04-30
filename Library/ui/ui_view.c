@@ -3,48 +3,67 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "../Picture/picture_display.h"
 #include "../tftlcd/tftlcd.h"
 #include "ui_common.h"
 
-/* ============================================================
- * File View Module (ui_view.c)
- * - 负责打开并显示选中文件内容
- * - 负责文本/UTF-8/二进制摘要显示分支
- * ============================================================ */
-
-/* -------------------- static 前置声明区 -------------------- */
-/* 本文件无内部 static 函数 */
+#define UI_VIEW_PREVIEW_X 0U
+#define UI_VIEW_PREVIEW_Y 104U
+#define UI_VIEW_PREVIEW_WIDTH 320U
+#define UI_VIEW_PREVIEW_HEIGHT 342U
 
 /**
- * @file ui_view.c
- * @brief 文件查看页面模块
+ * @brief 判断扩展名是否属于当前支持的运行时图片格式
+ * @param ext 文件扩展名，不包含点号
+ * @return uint8_t 1=按图片处理，0=按普通文件处理
  */
+static uint8_t UI_View_IsPictureFile(const char *ext)
+{
+    if (ext == NULL)
+    {
+        return 0U;
+    }
 
-/**
- * @brief 显示指定文件内容
- * @param index 文件索引
- * @retval 无
- * @details
- * 功能：在查看页展示文件头部内容样本。
- * 输入：文件索引、文件缓存信息。
- * 输出：根据内容类型显示文本或十六进制摘要。
- * 分支：
- * 1. GB2312/ASCII 文本：直接显示；
- * 2. UTF-8 文本：先转 GB2312 再显示；
- * 3. 其他内容：按 hex 摘要显示。
- */
+    if (((ext[0] == 'b' || ext[0] == 'B') &&
+         (ext[1] == 'm' || ext[1] == 'M') &&
+         (ext[2] == 'p' || ext[2] == 'P') &&
+         ext[3] == '\0'))
+    {
+        return 1U;
+    }
+
+    if (((ext[0] == 'j' || ext[0] == 'J') &&
+         (ext[1] == 'p' || ext[1] == 'P') &&
+         (ext[2] == 'g' || ext[2] == 'G') &&
+         ext[3] == '\0'))
+    {
+        return 1U;
+    }
+
+    if (((ext[0] == 'j' || ext[0] == 'J') &&
+         (ext[1] == 'p' || ext[1] == 'P') &&
+         (ext[2] == 'e' || ext[2] == 'E') &&
+         (ext[3] == 'g' || ext[3] == 'G') &&
+         ext[4] == '\0'))
+    {
+        return 1U;
+    }
+
+    return 0U;
+}
+
 void UI_View_Show(uint16_t index)
 {
     FIL file;
     FRESULT res;
-    UINT read_len = 0;
+    UINT read_len = 0U;
     uint8_t buf[FILE_VIEW_READ_MAX + 1U];
     uint8_t gb_buf[FILE_VIEW_READ_MAX * 2U + 1U];
     uint8_t likely_text = 1U;
     uint8_t is_utf8 = 0U;
     uint16_t i;
     char line[128];
-    char path[80];
+    char path[UI_FILE_PATH_MAX];
 
     BACK_COLOR = WHITE;
     LCD_Clear(WHITE);
@@ -52,7 +71,7 @@ void UI_View_Show(uint16_t index)
     LCD_ShowString(8, 8, 304, 16, 16, (uint8_t *)"File View (KEY2)");
     LCD_DrawLine(0, 28, 319, 28);
 
-    /* 防御：索引越界时直接提示并返回 */
+    /* 第 1 步：校验列表索引，避免访问文件缓存越界。 */
     if (index >= g_file_count)
     {
         FRONT_COLOR = RED;
@@ -60,14 +79,63 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
+    /* 第 2 步：显示文件基本信息。 */
     snprintf(line, sizeof(line), "Name: %s", g_file_entries[index].name);
     FRONT_COLOR = BLACK;
     LCD_ShowString(8, 44, 304, 16, 16, (uint8_t *)line);
-    snprintf(line, sizeof(line), "Ext: %s  Size:%luB", g_file_entries[index].ext, (unsigned long)g_file_entries[index].size);
+
+    snprintf(line,
+             sizeof(line),
+             "Ext: %s  Size:%luB",
+             g_file_entries[index].ext,
+             (unsigned long)g_file_entries[index].size);
     LCD_ShowString(8, 62, 304, 16, 16, (uint8_t *)line);
 
-    snprintf(path, sizeof(path), "0:/%s", g_file_entries[index].name);
-    /* 打开并读取文件前 FILE_VIEW_READ_MAX 字节作为显示样本 */
+    /* 第 3 步：基于当前浏览目录拼完整路径。 */
+    if (!UI_BuildSelectedFilePath(index, path, sizeof(path)))
+    {
+        FRONT_COLOR = RED;
+        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)"Build path failed");
+        return;
+    }
+
+    /* 第 4 步：图片文件走图片预览分支。 */
+    if (UI_View_IsPictureFile(g_file_entries[index].ext))
+    {
+        PictureResult picture_ret;
+        char preview_status[64];
+
+        /* 每次预览前先清空图片区，避免上一张图残留。 */
+        LCD_Fill(UI_VIEW_PREVIEW_X,
+                 UI_VIEW_PREVIEW_Y,
+                 (uint16_t)(UI_VIEW_PREVIEW_X + UI_VIEW_PREVIEW_WIDTH - 1U),
+                 (uint16_t)(UI_VIEW_PREVIEW_Y + UI_VIEW_PREVIEW_HEIGHT - 1U),
+                 WHITE);
+
+        picture_ret = Picture_Show(path,
+                                   UI_VIEW_PREVIEW_X,
+                                   UI_VIEW_PREVIEW_Y,
+                                   UI_VIEW_PREVIEW_WIDTH,
+                                   UI_VIEW_PREVIEW_HEIGHT);
+
+        /* 结果直接显示在 Image Preview: 后面。 */
+        FRONT_COLOR = (picture_ret == PICTURE_OK) ? GREEN : RED;
+        snprintf(preview_status,
+                 sizeof(preview_status),
+                 "Image Preview: %s",
+                 (picture_ret == PICTURE_OK) ? "OK" : Picture_ResultString(picture_ret));
+        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)preview_status);
+        LCD_DrawLine(0, 102, 319, 102);
+
+        /* 底部仅保留返回提示。 */
+        LCD_Fill(0, 446, 319, 479, WHITE);
+        FRONT_COLOR = BLUE;
+        LCD_DrawLine(0, 446, 319, 446);
+        LCD_ShowString(8, 462, 304, 16, 16, (uint8_t *)"KEY0/KEY2: Back List");
+        return;
+    }
+
+    /* 第 5 步：非图片文件按原来的文本/十六进制预览逻辑处理。 */
     res = f_open(&file, path, FA_READ);
     if (res != FR_OK)
     {
@@ -76,7 +144,6 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
-    /* 先读取固定长度样本，避免一次性加载过大文件 */
     memset(buf, 0, sizeof(buf));
     res = f_read(&file, buf, FILE_VIEW_READ_MAX, &read_len);
     (void)f_close(&file);
@@ -87,8 +154,7 @@ void UI_View_Show(uint16_t index)
         return;
     }
 
-    /* 初步判断是否“可视文本” */
-    for (i = 0; i < read_len; i++)
+    for (i = 0U; i < read_len; i++)
     {
         uint8_t ch = buf[i];
         if (ch == 0U || (ch < 0x20U && ch != '\r' && ch != '\n' && ch != '\t'))
@@ -98,9 +164,7 @@ void UI_View_Show(uint16_t index)
         }
     }
 
-    /* 粗分类：文本/编码类型 */
     is_utf8 = UI_IsValidUtf8(buf, (uint16_t)read_len);
-    /* 分支1：GB2312/ASCII 文本 */
     if (likely_text && !is_utf8)
     {
         buf[read_len] = '\0';
@@ -109,7 +173,6 @@ void UI_View_Show(uint16_t index)
         FRONT_COLOR = BLACK;
         LCD_ShowTextMixed(8, 104, 304, 188, buf);
     }
-    /* 分支2：UTF-8 文本，先转 GB2312 再显示 */
     else if (likely_text && is_utf8)
     {
         FRONT_COLOR = GREEN;
@@ -124,29 +187,44 @@ void UI_View_Show(uint16_t index)
             LCD_ShowString(8, 104, 304, 16, 16, (uint8_t *)"Convert failed");
         }
     }
-    /* 分支3：非文本，按十六进制摘要显示 */
     else
     {
-        uint16_t y = 104;
-        uint16_t pos = 0;
+        uint16_t y = 104U;
+        uint16_t pos = 0U;
+
         FRONT_COLOR = GREEN;
-        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)(is_utf8 ? "UTF-8 content (hex view):" : "Content (hex, first bytes):"));
+        LCD_ShowString(8, 84, 304, 16, 16,
+                       (uint8_t *)(is_utf8 ? "UTF-8 content (hex view):" : "Content (hex, first bytes):"));
         FRONT_COLOR = BLACK;
-        while (pos < read_len && y <= 284)
+        while (pos < read_len && y <= 284U)
         {
             char hexline[64];
             uint16_t j;
             uint16_t n = (uint16_t)(((read_len - pos) > 8U) ? 8U : (read_len - pos));
             char *cursor = hexline;
-            int written = snprintf(cursor, (size_t)(sizeof(hexline) - (size_t)(cursor - hexline)), "%04X:", pos);
-            if (written < 0) break;
-            cursor += written;
-            for (j = 0; j < n; j++)
+            int written = snprintf(cursor,
+                                   (size_t)(sizeof(hexline) - (size_t)(cursor - hexline)),
+                                   "%04X:",
+                                   pos);
+            if (written < 0)
             {
-                written = snprintf(cursor, (size_t)(sizeof(hexline) - (size_t)(cursor - hexline)), " %02X", buf[pos + j]);
-                if (written < 0) break;
+                break;
+            }
+            cursor += written;
+
+            for (j = 0U; j < n; j++)
+            {
+                written = snprintf(cursor,
+                                   (size_t)(sizeof(hexline) - (size_t)(cursor - hexline)),
+                                   " %02X",
+                                   buf[pos + j]);
+                if (written < 0)
+                {
+                    break;
+                }
                 cursor += written;
             }
+
             LCD_ShowString(8, y, 304, 16, 16, (uint8_t *)hexline);
             y = (uint16_t)(y + 18U);
             pos = (uint16_t)(pos + n);
@@ -159,20 +237,18 @@ void UI_View_Show(uint16_t index)
     LCD_ShowString(8, 326, 304, 16, 16, (uint8_t *)"Auto return main in 30s");
 }
 
-/**
- * @brief 打开当前选中文件
- * @param 无
- * @retval 无
- * @details
- * 功能：将列表页当前选中项切换到查看页显示。
- * 输出：更新 g_view_index、切页并绘制查看页。
- */
 void UI_View_OpenSelected(void)
 {
+    /* 查看页只允许打开普通文件。 */
     if (g_file_count == 0U || g_selected_index >= g_file_count)
     {
         return;
     }
+    if (g_file_entries[g_selected_index].type != UI_ENTRY_FILE)
+    {
+        return;
+    }
+
     g_view_index = g_selected_index;
     UI_EnterPage(UI_PAGE_FILE_VIEW);
     UI_View_Show(g_view_index);

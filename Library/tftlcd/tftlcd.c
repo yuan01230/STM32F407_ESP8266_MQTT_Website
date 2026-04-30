@@ -9,6 +9,16 @@
  ******************************************************************************
  */
 
+/*
+ * 说明：
+ * - 本文件是 LCD 底层驱动和基础绘图实现。
+ * - 上层 UI、图片模块、字库显示最终都会落到这里的基础接口。
+ * - 当前职责可分为三类：
+ *   1. LCD 控制器初始化与方向配置；
+ *   2. 像素、直线、矩形、清屏等基础绘图；
+ *   3. ASCII、中文、混排文本和位图显示。
+ */
+
 #include "tftlcd.h"
 
 #include "tftlcd.h"
@@ -155,9 +165,7 @@ void LCD_Set_Window(u16 sx,u16 sy,u16 width,u16 height)
 //杩斿洖鍊?姝ょ偣鐨勯鑹?u16 LCD_ReadPoint(u16 x,u16 y)
 u16 LCD_ReadPoint(u16 x,u16 y)
 {
- 	u16 r=0,g=0,b=0;
-	u16 r1,r2,r3;
-	u32 value;
+ 	u16 r=0,g=0;
 
 	if(x>=tftlcd_data.width||y>=tftlcd_data.height)return 0;	//瓒呰繃浜嗚寖鍥?鐩存帴杩斿洖
 	LCD_Set_Window(x, y, x, y);
@@ -177,7 +185,7 @@ u16 LCD_ReadPoint(u16 x,u16 y)
 	r=TFTLCD->LCD_DATA;
 	r=TFTLCD->LCD_DATA;
 	g=TFTLCD->LCD_DATA;
-	b=TFTLCD->LCD_DATA;
+	(void)TFTLCD->LCD_DATA;
 	r=r<<8|(g&0xff);
 #endif
 
@@ -308,6 +316,13 @@ void TFTLCD_Init(void)
 
 //娓呭睆鍑芥暟
 //color:瑕佹竻灞忕殑濉厖鑹?void LCD_Clear(u16 color)
+/**
+ * @brief 全屏清屏
+ * @param color 填充颜色，RGB565
+ * @details
+ * 当前实现通过设置整屏窗口后，逐像素连续写入颜色值。
+ * 这是最基础也最稳定的清屏方式，上层很多页面切换都依赖它。
+ */
 void LCD_Clear(u16 color)
 {
 	uint16_t i, j ;
@@ -323,6 +338,16 @@ void LCD_Clear(u16 color)
 }
 
 // 娓呴櫎鎸囧畾鍖哄煙锛堝～鍏呴鑹诧級
+/**
+ * @brief 清除指定矩形区域
+ * @param x0 左上角 X
+ * @param y0 左上角 Y
+ * @param x1 右下角 X
+ * @param y1 右下角 Y
+ * @details
+ * 与全屏清屏相比，这个接口更适合 UI 局部刷新。
+ * 例如图片预览区清背景、列表页单行重绘前擦除旧内容，都会优先使用它。
+ */
 void LCD_ClearArea(uint16_t x0, uint16_t y0,
                    uint16_t x1, uint16_t y1)
 {
@@ -353,6 +378,16 @@ void LCD_ClearArea(uint16_t x0, uint16_t y0,
 //鍦ㄦ寚瀹氬尯鍩熷唴濉厖鍗曚釜棰滆壊
 //(sx,sy),(ex,ey):濉厖鐭╁舰瀵硅鍧愭爣,鍖哄煙澶у皬涓?(ex-sx+1)*(ey-sy+1)
 //color:瑕佸～鍏呯殑棰滆壊
+/**
+ * @brief 用单色填充矩形区域
+ * @details
+ * 这是 LCD 层最常用的基础绘图接口之一。
+ * 上层页面会把它当作：
+ * - 清某个小区域
+ * - 绘制底栏背景
+ * - 绘制分隔区块
+ * 来使用。
+ */
 void LCD_Fill(u16 xState,u16 yState,u16 xEnd,u16 yEnd,u16 color)
 {
 	uint16_t temp;
@@ -381,7 +416,8 @@ void LCD_Color_Fill(u16 sx,u16 sy,u16 ex,u16 ey,u16 *color)
 {
 	u16 height,width;
 	u16 i,j;
-	width=ex-sx+1; 			//寰楀埌濉厖鐨勫搴?	height=ey-sy+1;			//楂樺害
+	width=ex-sx+1; 			// 寰楀埌濉厖鐨勫搴?
+	height=ey-sy+1;			// 楂樺害
 
 	for(i=0;i<height;i++)
 	{
@@ -644,6 +680,12 @@ void LCD_ShowxNum(u16 x,u16 y,u32 num,u8 len,u8 size,u8 mode)
 //width,height:鍖哄煙澶у皬
 //size:瀛椾綋澶у皬
 //*p:瀛楃涓茶捣濮嬪湴鍧€
+/**
+ * @brief 显示 ASCII 字符串
+ * @details
+ * 该接口适合显示纯英文、数字和符号。
+ * 如果文本里包含中文，应优先使用 `LCD_ShowTextMixed()` 或 `LCD_ShowChinese()`。
+ */
 void LCD_ShowString(u16 x,u16 y,u16 width,u16 height,u8 size,u8 *p)
 {
 	u8 x0=x;
@@ -692,6 +734,17 @@ static void LCD_DrawPlaceholder16x16(uint16_t x, uint16_t y)
     LCD_DrawLine_Color(x + 12, y + 3, x + 3, y + 12, RED);
 }
 
+/**
+ * @brief 显示 ASCII 与中文混排文本
+ * @param text 输入字节流
+ * @details
+ * 这是当前工程最关键的文本显示接口之一：
+ * - ASCII 部分直接按字符显示；
+ * - 中文部分通过 `font_codec + font_storage` 解析并取字模；
+ * - 最终统一绘制到 LCD。
+ *
+ * 上层 UI 的 UTF-8 文本显示，通常会先转成 GB2312，再走这个接口。
+ */
 void LCD_ShowTextMixed(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint8_t *text)
 {
     uint16_t x0 = x;
@@ -820,6 +873,12 @@ void LCD_ShowFontHZ(u16 x, u16 y, u8 *cn)
 
 // 鍋囪锛?// - Chinese_Count 鏄眽瀛楁€绘暟锛堜緥濡?24锛?// - Chinese_Index_UTF8 鏄綘涔嬪墠杞崲濂界殑 UTF-8 瀛楄妭鏁扮粍锛堟瘡涓」鏈€澶?3 瀛楄妭鏈夋晥锛?// - Chinese_Font16x16 鏄搴旂殑 16x16 鐐归樀瀛椾綋鏁版嵁
 
+/**
+ * @brief 显示中文字符串
+ * @details
+ * 这个接口更适合“纯中文或以中文为主”的场景。
+ * 如果字符串中混有英文、数字、换行等复杂布局需求，优先使用混排接口。
+ */
 void LCD_ShowChinese(uint16_t x, uint16_t y, const char *str)
 {
     uint16_t i, row, col;

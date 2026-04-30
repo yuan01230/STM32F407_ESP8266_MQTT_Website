@@ -6,6 +6,13 @@
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * 说明：
+ * - 本文件封装了一组面向演示页面的 SD 文件操作。
+ * - 它不是通用文件系统抽象层，而是“读写 SD + 直接在 LCD 和串口输出结果”的组合模块。
+ * - 当前四条主流程分别是：容量统计、创建文档、读取文档、列出根目录文件。
+ */
+
 #define TEST_BUFFER_SIZE 512
 #define DEFAULT_DOC_FILENAME "default.txt"
 
@@ -21,6 +28,17 @@ static uint8_t SD_Check_Storage_Size(void);
 static uint8_t SD_Create_Document(void);
 static uint8_t SD_Read_Document(void);
 static uint8_t SD_List_All_Files(void);
+
+/**
+ * @brief 统计 SD 卡容量和根目录文件总量
+ * @return 1 成功，0 失败
+ * @details
+ * 处理流程：
+ * 1. 通过 `f_getfree()` 获取 FATFS 空闲簇信息；
+ * 2. 结合 SD 卡扇区大小换算总容量、已用容量和剩余容量；
+ * 3. 扫描根目录下的普通文件，统计文件数量和总大小；
+ * 4. 同时把结果输出到串口和 LCD 页面。
+ */
 
 static uint8_t SD_Check_Storage_Size(void)
 {
@@ -105,12 +123,20 @@ static uint8_t SD_Check_Storage_Size(void)
     return 1;
 }
 
+/**
+ * @brief 在根目录创建默认测试文档
+ * @return 1 成功，0 失败
+ * @details
+ * 当前实现会读取 RTC 时间，拼出一段固定格式的文本内容，
+ * 然后以 `default.txt` 的名字写入 SD 卡根目录。
+ * 该函数主要用于验证：SD 写文件链路、RTC 取时链路以及 LCD 结果展示链路。
+ */
 static uint8_t SD_Create_Document(void)
 {
     FIL file;
     UINT bytes_written;
     FRESULT res;
-    char doc_content[256];
+    char doc_content[384];
     RTC_TimeTypeDef sTime;
     RTC_DateTypeDef sDate;
     const char *filename = DEFAULT_DOC_FILENAME;
@@ -125,7 +151,7 @@ static uint8_t SD_Create_Document(void)
 
     printf("[Create Doc] Filename: %s\r\n", filename);
 
-    snprintf(doc_content, sizeof(doc_content),
+    (void)snprintf(doc_content, sizeof(doc_content),
              "=====================================\r\n"
              "  STM32F407 SDIO Create Document Demo\r\n"
              "=====================================\r\n\r\n"
@@ -139,7 +165,7 @@ static uint8_t SD_Create_Document(void)
              sTime.Hours, sTime.Minutes, sTime.Seconds,
              sDate.WeekDay, filename);
 
-    uint32_t len = strlen(doc_content);
+    uint32_t len = (uint32_t)strlen(doc_content);
 
     res = f_open(&file, filename, FA_CREATE_ALWAYS | FA_WRITE);
     if(res != FR_OK)
@@ -164,6 +190,15 @@ static uint8_t SD_Create_Document(void)
     return 1;
 }
 
+/**
+ * @brief 读取默认测试文档并缓存到读缓冲区
+ * @return 1 成功，0 失败
+ * @details
+ * 这里读取的是 `default.txt`，主要用于验证：
+ * 1. SD 文件打开是否正常；
+ * 2. 文件内容读取是否正常；
+ * 3. 读取结果能否同时输出到串口和 LCD。
+ */
 static uint8_t SD_Read_Document(void)
 {
     FIL file;
@@ -209,6 +244,15 @@ static uint8_t SD_Read_Document(void)
     return 1;
 }
 
+/**
+ * @brief 扫描并列出根目录下的全部可见文件
+ * @return 1 成功，0 失败
+ * @details
+ * 当前列表页逻辑已经迁移到 `ui` 模块，这里的实现保留为演示式文件清单页面：
+ * - 串口输出完整列表；
+ * - LCD 只显示可见范围内的一部分条目；
+ * - 超出 LCD 高度时，通过底部提示告知“更多内容请看串口”。
+ */
 static uint8_t SD_List_All_Files(void)
 {
     DIR dir;
@@ -305,6 +349,14 @@ static uint8_t SD_List_All_Files(void)
     return 1;
 }
 
+/**
+ * @brief 显示“存储容量统计”页面
+ * @details
+ * 这是一个页面级封装函数：
+ * - 先清屏；
+ * - 再执行容量统计；
+ * - 最后补上底部提示信息。
+ */
 void LCD_Show_Storage_Size_Menu(void)
 {
     LCD_Clear(WHITE);
@@ -315,6 +367,15 @@ void LCD_Show_Storage_Size_Menu(void)
     LCD_DrawLine(0, 300, 320, 300);
 }
 
+/**
+ * @brief 显示“创建文档结果”页面
+ * @details
+ * 页面内容包括：
+ * - 创建是否成功
+ * - 文件名
+ * - RTC 时间
+ * - 文档内容摘要
+ */
 void LCD_Show_Create_Doc_Menu(void)
 {
     LCD_Clear(WHITE);
@@ -329,7 +390,7 @@ void LCD_Show_Create_Doc_Menu(void)
 
         FRONT_COLOR = BLACK;
         char disp_buf[64];
-        sprintf(disp_buf, "File: %s", latest_filename);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "File: %.57s", latest_filename);
         LCD_ShowString(10, 85, 220, 24, 24, (uint8_t*)disp_buf);
         LCD_ShowString(10, 120, 220, 24, 24, (uint8_t*)"Content: RTC Time");
     }
@@ -345,6 +406,15 @@ void LCD_Show_Create_Doc_Menu(void)
     LCD_DrawLine(0, 300, 320, 300);
 }
 
+/**
+ * @brief 显示“读取文档结果”页面
+ * @details
+ * 页面会显示：
+ * - 目标文件名
+ * - 读取结果
+ * - 读取字节数
+ * - 文档内容预览
+ */
 void LCD_Show_Read_Doc_Menu(void)
 {
     LCD_Clear(WHITE);
@@ -359,9 +429,9 @@ void LCD_Show_Read_Doc_Menu(void)
 
         FRONT_COLOR = BLACK;
         char disp_buf[128];
-        sprintf(disp_buf, "File: %s", latest_filename);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "File: %.57s", latest_filename);
         LCD_ShowString(10, 85, 300, 16, 16, (uint8_t*)disp_buf);
-        sprintf(disp_buf, "Size: %lu bytes", latest_read_size);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "Size: %lu bytes", latest_read_size);
         LCD_ShowString(10, 110, 300, 16, 16, (uint8_t*)disp_buf);
 
         uint16_t index = 0;
@@ -420,6 +490,13 @@ void LCD_Show_Read_Doc_Menu(void)
     LCD_ShowString(10, 452, 300, 16, 16, (uint8_t*)"Auto return in 30s...");
 }
 
+/**
+ * @brief 显示“根目录文件列表”演示页面
+ * @details
+ * 该页面和新的通用文件浏览器并存：
+ * - 这里更像一个调试/演示页面；
+ * - 真正的目录浏览能力由 `ui` 模块负责。
+ */
 void LCD_Show_List_Files_Menu(void)
 {
     SD_List_All_Files();

@@ -5,6 +5,15 @@
 
 #include <string.h>
 
+/*
+ * 说明：
+ * - 本文件负责“字库如何落到外部 Flash，并在运行时按偏移读回字模”。
+ * - 上层只关心三件事：
+ *   1. 字库是否已经就绪；
+ *   2. 能否从 SD 重新导入字库；
+ *   3. 给定字模偏移后，能否读到对应 16x16 点阵数据。
+ */
+
 /* 字库头魔数（'FZ16'） */
 #define FONT_STORAGE_MAGIC           0x465A3136UL
 /* 字库头版本号，用于兼容性判断 */
@@ -58,12 +67,6 @@ static uint32_t FontStorage_Crc32Update(uint32_t crc, const uint8_t *data, uint3
     return crc;
 }
 
-/* 一次性 CRC32 接口（当前版本未直接使用，保留便于扩展） */
-static uint32_t FontStorage_Crc32(const uint8_t *data, uint32_t len)
-{
-    return FontStorage_Crc32Update(0xFFFFFFFFUL, data, len) ^ 0xFFFFFFFFUL;
-}
-
 /* 校验字库头是否合法（magic/version/size） */
 static uint8_t FontStorage_ValidateHeader(const FontStorageHeader *header)
 {
@@ -85,6 +88,12 @@ static uint8_t FontStorage_ValidateHeader(const FontStorageHeader *header)
     return 1;
 }
 
+/**
+ * @brief 启动时初始化字库状态
+ * @details
+ * 系统上电后不会立刻重导字库，而是先去外部 Flash 读取字库头。
+ * 如果头信息合法，就认为当前板子上已经有可用字库，可以直接进入运行态。
+ */
 void FontStorage_Init(void)
 {
     EN25QXX_Read((uint8_t *)&g_header, FONT_STORAGE_FLASH_BASE, (uint16_t)sizeof(g_header));
@@ -106,6 +115,21 @@ uint32_t FontStorage_GetFontSize(void)
     return g_header.font_size;
 }
 
+/**
+ * @brief 从 SD 导入字库到外部 Flash，并支持进度回调
+ * @param path SD 卡中字库文件路径
+ * @param cb 进度回调
+ * @param user 回调上下文
+ * @return FontStorageResult 导入结果
+ * @details
+ * 导入流程如下：
+ * 1. 打开 SD 字库文件；
+ * 2. 校验文件大小是否合法；
+ * 3. 计算需要擦除的 Flash 扇区数量；
+ * 4. 分块读取 SD 文件并写入 Flash；
+ * 5. 计算整个字库文件的 CRC32；
+ * 6. 最后写入字库头，标记此次导入完成。
+ */
 FontStorageResult FontStorage_ImportFromSDEx(const char *path, FontStorageProgressCallback cb, void *user)
 {
     FIL file;
@@ -211,6 +235,16 @@ FontStorageResult FontStorage_ImportFromSD(const char *path)
     return FontStorage_ImportFromSDEx(path, 0, 0);
 }
 
+/**
+ * @brief 按字模偏移读取 16x16 点阵
+ * @param glyph_offset 字模偏移
+ * @param glyph_buf32 输出 32 字节点阵缓冲区
+ * @return FontStorageResult 读取结果
+ * @details
+ * 该接口是运行时最常用的字库读取入口。
+ * 上层在完成编码解析后，会把 GB2312 计算出的字模偏移传进来，
+ * 然后再把读出的 32 字节点阵送给 LCD 绘制函数。
+ */
 FontStorageResult FontStorage_ReadGlyph16(uint32_t glyph_offset, uint8_t *glyph_buf32)
 {
     uint32_t addr;

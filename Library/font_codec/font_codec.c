@@ -1,5 +1,26 @@
 ﻿#include "font_codec.h"
 
+/*
+ * 说明：
+ * - 本文件只解决一个问题：把当前输入字节流解释成“ASCII 字符”或“GB2312 汉字”。
+ * - 一旦识别成功，就给出：
+ *   1. 本次消费了几个字节；
+ *   2. 是否是 ASCII；
+ *   3. 如果是汉字，对应 HZK16 字库中的字模偏移是多少。
+ */
+
+/**
+ * @brief 解析当前输入位置的一个字符
+ * @param text 输入字节流
+ * @param token 输出解析结果
+ * @return FontCodecResult 解析状态
+ * @details
+ * 处理顺序很直接：
+ * 1. 先做参数合法性检查；
+ * 2. 如果首字节最高位为 0，则按 ASCII 单字节处理；
+ * 3. 否则按 GB2312 双字节区位码规则校验；
+ * 4. 对合法汉字计算其在 HZK16 字库中的偏移地址。
+ */
 FontCodecResult FontCodec_ParseGB2312(const uint8_t *text, FontCodecToken *token)
 {
     uint8_t qh;

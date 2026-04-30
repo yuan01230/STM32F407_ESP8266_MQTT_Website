@@ -5,6 +5,13 @@
 #include "../tftlcd/tftlcd.h"
 #include "ui_common.h"
 
+/*
+ * 说明：
+ * - 本文件只负责文件列表页。
+ * - 列表页既要展示目录和文件，又要尽量减少闪屏，所以采用“整页重绘 + 局部刷新”混合策略。
+ * - 当前目录路径、条目缓存和选中索引都由 ui_common 层维护，这里只读取并显示。
+ */
+
 /* ============================================================
  * File List Module (ui_list.c)
  * - 负责文件列表页面绘制
@@ -34,7 +41,9 @@ static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected);
  */
 static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected)
 {
-    uint16_t y = (uint16_t)(44U + row * 18U);
+    /* 列表内容整体下移，给标题和当前路径预留更充足的垂直空间，
+     * 避免第一行文件名与顶部路径说明发生重叠。 */
+    uint16_t y = (uint16_t)(64U + row * 18U);
     char line_mixed[128];
     const char *mark = selected ? ">" : " ";
 
@@ -42,8 +51,23 @@ static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected)
     LCD_Fill(0, (uint16_t)(y - 1U), 319, (uint16_t)(y + 16U), WHITE);
     if (idx >= g_file_count) return;
 
-    snprintf(line_mixed, sizeof(line_mixed), "%s%s  .%s  %luB",
-             mark, g_file_entries[idx].name, g_file_entries[idx].ext, (unsigned long)g_file_entries[idx].size);
+    /* 列表项分三类显示：
+     * 1. `[..]` 代表返回父目录；
+     * 2. `[DIR]` 目录项代表可以继续进入；
+     * 3. 普通文件继续显示名称、扩展名和大小。 */
+    if (g_file_entries[idx].type == UI_ENTRY_PARENT)
+    {
+        snprintf(line_mixed, sizeof(line_mixed), "%s[..]", mark);
+    }
+    else if (g_file_entries[idx].type == UI_ENTRY_DIR)
+    {
+        snprintf(line_mixed, sizeof(line_mixed), "%s[DIR] %s", mark, g_file_entries[idx].name);
+    }
+    else
+    {
+        snprintf(line_mixed, sizeof(line_mixed), "%s%s  .%s  %luB",
+                 mark, g_file_entries[idx].name, g_file_entries[idx].ext, (unsigned long)g_file_entries[idx].size);
+    }
     FRONT_COLOR = selected ? RED : BLACK;
     LCD_ShowTextMixed(4, y, 312, 16, (const uint8_t *)line_mixed);
 }
@@ -57,6 +81,16 @@ static void UI_List_ShowRow(uint16_t row, uint16_t idx, uint8_t selected)
  * 输入：文件缓存、选中项、分页窗口、倒计时状态。
  * 输出：列表页可见区域更新到 LCD。
  */
+/**
+ * @brief 文件列表页显示入口
+ * @details
+ * 本函数会根据当前状态决定采用哪种刷新方式：
+ * 1. 首次进入或目录变化时，整页重绘；
+ * 2. 仅选中项变化时，只重绘旧选中行和新选中行；
+ * 3. 仅倒计时变化时，只刷新底部倒计时区域。
+ *
+ * 这样做的主要原因是 LCD 全屏重绘成本高，局部刷新能明显减轻闪烁。
+ */
 void UI_ListPage_Show(void)
 {
     /* 静态缓存用于判断“本次是否需要局部刷新” */
@@ -68,7 +102,7 @@ void UI_ListPage_Show(void)
     static uint32_t last_remain = 0xFFFFFFFFUL;
     uint16_t i;
     uint32_t remain = UI_GetRemainSeconds();
-    char line[40];
+    char line[80];
     uint8_t need_full = 0U;
 
     /* 触发整页重绘的条件：
@@ -86,17 +120,22 @@ void UI_ListPage_Show(void)
         FRONT_COLOR = BLUE;
         LCD_ShowString(8, 8, 304, 16, 16, (uint8_t *)"File List (KEY0)");
         LCD_DrawLine(0, 28, 319, 28);
-        LCD_Fill(0, 40, 319, 292, WHITE);
+        /* 当前目录单独占一行，并向下留白。
+         * 这样路径说明不会再和第一行列表项挤在一起。 */
+        snprintf(line, sizeof(line), "Dir: %s", UI_GetCurrentDir());
+        LCD_ShowString(8, 40, 304, 16, 16, (uint8_t *)line);
+        LCD_DrawLine(0, 58, 319, 58);
+        LCD_Fill(0, 60, 319, 292, WHITE);
 
         if (!g_sd_mounted)
         {
             FRONT_COLOR = RED;
-            LCD_ShowString(8, 44, 304, 16, 16, (uint8_t *)"SD not mounted");
+            LCD_ShowString(8, 64, 304, 16, 16, (uint8_t *)"SD not mounted");
         }
         else if (g_file_count == 0U)
         {
             FRONT_COLOR = RED;
-            LCD_ShowString(8, 44, 304, 16, 16, (uint8_t *)"No files in root");
+            LCD_ShowString(8, 64, 304, 16, 16, (uint8_t *)"No files in current dir");
         }
         else
         {
@@ -110,7 +149,7 @@ void UI_ListPage_Show(void)
         FRONT_COLOR = BLUE;
         LCD_DrawLine(0, 300, 319, 300);
         LCD_ShowString(8, 308, 304, 16, 16, (uint8_t *)"KEY1:Down KEY_UP:Up");
-        LCD_ShowString(8, 326, 304, 16, 16, (uint8_t *)"KEY2:Open/Close KEY0:Main");
+        LCD_ShowString(8, 326, 304, 16, 16, (uint8_t *)"KEY2:Enter/Open KEY0:Main");
         last_remain = 0xFFFFFFFFUL;
     }
     else if (g_sd_mounted && g_file_count > 0U)
@@ -165,6 +204,12 @@ void UI_ListPage_Show(void)
  * 功能：选中项 +1，超出末尾后回到首项。
  * 输出：更新 g_selected_index 与 g_list_top_index。
  */
+/**
+ * @brief 列表选中项向下移动
+ * @details
+ * 当选中项到达末尾时，采用循环方式回到首项。
+ * 同时会维护分页窗口顶部索引，确保当前选中项始终落在可见区域内。
+ */
 void UI_List_SelectDown(void)
 {
     if (g_file_count > 0U)
@@ -187,6 +232,12 @@ void UI_List_SelectDown(void)
  * @details
  * 功能：选中项 -1，到首项前回绕到末项。
  * 输出：更新 g_selected_index 与 g_list_top_index。
+ */
+/**
+ * @brief 列表选中项向上移动
+ * @details
+ * 当选中项在首项时，采用循环方式跳到最后一项。
+ * 同时会同步调整分页窗口顶部索引，保证高亮项可见。
  */
 void UI_List_SelectUp(void)
 {
