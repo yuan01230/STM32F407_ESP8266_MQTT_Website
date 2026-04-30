@@ -82,6 +82,7 @@
 | 文档 | 路径 | 说明 |
 | --- | --- | --- |
 | 项目总览与操作手册 | [doc/PROJECT_GUIDE.md](/F:/CLion/Clion_Code/14_Picture/doc/PROJECT_GUIDE.md) | 表格化说明页面、按键、模块和测试建议 |
+| 项目最终交付说明 | [DELIVERY_NOTE.md](/F:/CLion/Clion_Code/14_Picture/DELIVERY_NOTE.md) | 汇总本阶段交付内容、资源规范、已知限制和结论 |
 | 图片模块说明 | [Library/Picture/README.md](/F:/CLion/Clion_Code/14_Picture/Library/Picture/README.md) | 图片预览能力、JPEG 约束、状态码说明 |
 | SD 卡图片显示说明 | [Library/Picture/SD_CARD_LCD_IMAGE_DISPLAY.md](/F:/CLion/Clion_Code/14_Picture/Library/Picture/SD_CARD_LCD_IMAGE_DISPLAY.md) | 从 SD 卡读取图片到 LCD 的原理与工程说明 |
 
