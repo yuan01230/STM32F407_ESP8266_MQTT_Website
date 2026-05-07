@@ -75,10 +75,10 @@ void Error_Handler(void);
 #define LED1_GPIO_Port GPIOF
 #define KEY_UP_Pin GPIO_PIN_0
 #define KEY_UP_GPIO_Port GPIOA
-#define LCD_BL_Pin GPIO_PIN_12
-#define LCD_BL_GPIO_Port GPIOB
 #define SPI1_CS_Pin GPIO_PIN_14
 #define SPI1_CS_GPIO_Port GPIOB
+#define LCD_BL_Pin GPIO_PIN_15
+#define LCD_BL_GPIO_Port GPIOB
 #define dht11_Pin GPIO_PIN_9
 #define dht11_GPIO_Port GPIOG
 

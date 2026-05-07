@@ -1,4 +1,4 @@
-﻿/* USER CODE BEGIN Header */
+/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -55,11 +55,14 @@
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc3;
 
+I2S_HandleTypeDef hi2s2;
+DMA_HandleTypeDef hdma_spi2_tx;
+
 RTC_HandleTypeDef hrtc;
 
 SD_HandleTypeDef hsd;
-DMA_HandleTypeDef hdma_sdio_tx;
 DMA_HandleTypeDef hdma_sdio_rx;
+DMA_HandleTypeDef hdma_sdio_tx;
 
 SPI_HandleTypeDef hspi1;
 
@@ -94,6 +97,7 @@ static void MX_TIM2_Init(void);
 static void MX_ADC3_Init(void);
 static void MX_RTC_Init(void);
 static void MX_SDIO_SD_Init(void);
+static void MX_I2S2_Init(void);
 /* USER CODE BEGIN PFP */
 /* USER CODE END PFP */
 
@@ -103,7 +107,7 @@ static void MX_SDIO_SD_Init(void);
 /* USER CODE END 0 */
 
 /**
-  * @brief  应用程序入口函数
+  * @brief  The application entry point.
   * @retval int
   */
 int main(void)
@@ -113,16 +117,16 @@ int main(void)
 
   /* USER CODE END 1 */
 
-  /* MCU 配置 --------------------------------------------------------*/
+  /* MCU Configuration--------------------------------------------------------*/
 
-  /* 复位所有外设，初始化 Flash 接口与 SysTick */
+  /* Reset of all peripherals, Initializes the Flash interface and the Systick. */
   HAL_Init();
 
   /* USER CODE BEGIN Init */
 
   /* USER CODE END Init */
 
-  /* 配置系统时钟 */
+  /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
@@ -130,7 +134,7 @@ int main(void)
   delay_init();
   /* USER CODE END SysInit */
 
-  /* 初始化所有已配置外设 */
+  /* Initialize all configured peripherals */
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_FSMC_Init();
@@ -141,6 +145,7 @@ int main(void)
   MX_RTC_Init();
   MX_SDIO_SD_Init();
   MX_FATFS_Init();
+  MX_I2S2_Init();
   /* USER CODE BEGIN 2 */
 
   printf("\r\n\r");
@@ -236,24 +241,24 @@ int main(void)
     HAL_Delay(10);
   /* USER CODE END 3 */
 }
-
 }
 
 /**
-  * @brief 系统时钟配置
-  * @retval 无
+  * @brief System Clock Configuration
+  * @retval None
   */
 void SystemClock_Config(void)
 {
   RCC_OscInitTypeDef RCC_OscInitStruct = {0};
   RCC_ClkInitTypeDef RCC_ClkInitStruct = {0};
 
-  /** 配置主内部稳压器输出电压
+  /** Configure the main internal regulator output voltage
   */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
-  /** 按 RCC_OscInitTypeDef 参数初始化振荡器
+  /** Initializes the RCC Oscillators according to the specified parameters
+  * in the RCC_OscInitTypeDef structure.
   */
   RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
   RCC_OscInitStruct.LSEState = RCC_LSE_ON;
@@ -270,7 +275,7 @@ void SystemClock_Config(void)
     Error_Handler();
   }
 
-  /** 初始化 CPU、AHB、APB 总线时钟
+  /** Initializes the CPU, AHB and APB buses clocks
   */
   RCC_ClkInitStruct.ClockType = RCC_CLOCKTYPE_HCLK|RCC_CLOCKTYPE_SYSCLK
                               |RCC_CLOCKTYPE_PCLK1|RCC_CLOCKTYPE_PCLK2;
@@ -286,9 +291,9 @@ void SystemClock_Config(void)
 }
 
 /**
-  * @brief ADC3 初始化
-  * @param 无
-  * @retval 无
+  * @brief ADC3 Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_ADC3_Init(void)
 {
@@ -303,7 +308,7 @@ static void MX_ADC3_Init(void)
 
   /* USER CODE END ADC3_Init 1 */
 
-  /** 配置 ADC 全局特性（时钟、分辨率、对齐方式、转换数）
+  /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
   */
   hadc3.Instance = ADC3;
   hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
@@ -322,7 +327,7 @@ static void MX_ADC3_Init(void)
     Error_Handler();
   }
 
-  /** 配置规则通道、序列 Rank 与采样时间
+  /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
   sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = 1;
@@ -338,9 +343,43 @@ static void MX_ADC3_Init(void)
 }
 
 /**
-  * @brief RTC 初始化
-  * @param 无
-  * @retval 无
+  * @brief I2S2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_I2S2_Init(void)
+{
+
+  /* USER CODE BEGIN I2S2_Init 0 */
+
+  /* USER CODE END I2S2_Init 0 */
+
+  /* USER CODE BEGIN I2S2_Init 1 */
+
+  /* USER CODE END I2S2_Init 1 */
+  hi2s2.Instance = SPI2;
+  hi2s2.Init.Mode = I2S_MODE_MASTER_TX;
+  hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
+  hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
+  hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_ENABLE;
+  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_44K;
+  hi2s2.Init.CPOL = I2S_CPOL_LOW;
+  hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
+  hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
+  if (HAL_I2S_Init(&hi2s2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN I2S2_Init 2 */
+
+  /* USER CODE END I2S2_Init 2 */
+
+}
+
+/**
+  * @brief RTC Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_RTC_Init(void)
 {
@@ -357,7 +396,7 @@ static void MX_RTC_Init(void)
 
   /* USER CODE END RTC_Init 1 */
 
-  /** 初始化 RTC 本体
+  /** Initialize RTC Only
   */
   hrtc.Instance = RTC;
   hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
@@ -375,7 +414,7 @@ static void MX_RTC_Init(void)
 
   /* USER CODE END Check_RTC_BKUP */
 
-  /** 设置 RTC 时间与日期
+  /** Initialize RTC and set the Time and Date
   */
   sTime.Hours = 0x10;
   sTime.Minutes = 0x20;
@@ -396,7 +435,7 @@ static void MX_RTC_Init(void)
     Error_Handler();
   }
 
-  /** 使能闹钟 A
+  /** Enable the Alarm A
   */
   sAlarm.AlarmTime.Hours = 0x0;
   sAlarm.AlarmTime.Minutes = 0x0;
@@ -415,14 +454,14 @@ static void MX_RTC_Init(void)
     Error_Handler();
   }
 
-  /** 使能 WakeUp 定时
+  /** Enable the WakeUp
   */
   if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, 9, RTC_WAKEUPCLOCK_CK_SPRE_16BITS) != HAL_OK)
   {
     Error_Handler();
   }
 
-  /** 使能时间戳功能
+  /** Enable the TimeStamp
   */
   if (HAL_RTCEx_SetTimeStamp_IT(&hrtc, RTC_TIMESTAMPEDGE_RISING, RTC_TIMESTAMPPIN_DEFAULT) != HAL_OK)
   {
@@ -435,9 +474,9 @@ static void MX_RTC_Init(void)
 }
 
 /**
-  * @brief SDIO 初始化
-  * @param 无
-  * @retval 无
+  * @brief SDIO Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_SDIO_SD_Init(void)
 {
@@ -463,9 +502,9 @@ static void MX_SDIO_SD_Init(void)
 }
 
 /**
-  * @brief SPI1 初始化
-  * @param 无
-  * @retval 无
+  * @brief SPI1 Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_SPI1_Init(void)
 {
@@ -477,7 +516,7 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 1 */
 
   /* USER CODE END SPI1_Init 1 */
-  /* SPI1 参数配置 */
+  /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
@@ -501,9 +540,9 @@ static void MX_SPI1_Init(void)
 }
 
 /**
-  * @brief TIM2 初始化
-  * @param 无
-  * @retval 无
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_TIM2_Init(void)
 {
@@ -546,9 +585,9 @@ static void MX_TIM2_Init(void)
 }
 
 /**
-  * @brief USART1 初始化
-  * @param 无
-  * @retval 无
+  * @brief USART1 Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_USART1_UART_Init(void)
 {
@@ -579,30 +618,32 @@ static void MX_USART1_UART_Init(void)
 }
 
 /**
-  * @brief 使能 DMA 控制器时钟并配置中断
-  * @param 无
-  * @retval 无
+  * Enable DMA controller clock
   */
 static void MX_DMA_Init(void)
 {
 
-  /* 使能 DMA 控制器时钟 */
+  /* DMA controller clock enable */
+  __HAL_RCC_DMA1_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
 
-  /* DMA 中断初始化 */
-  /* 配置 DMA2_Stream3_IRQn */
+  /* DMA interrupt init */
+  /* DMA1_Stream4_IRQn interrupt configuration */
+  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
+  HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
+  /* DMA2_Stream3_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
-  /* 配置 DMA2_Stream6_IRQn */
+  /* DMA2_Stream6_IRQn interrupt configuration */
   HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 0, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
 
 }
 
 /**
-  * @brief GPIO 初始化
-  * @param 无
-  * @retval 无
+  * @brief GPIO Initialization Function
+  * @param None
+  * @retval None
   */
 static void MX_GPIO_Init(void)
 {
@@ -611,7 +652,7 @@ static void MX_GPIO_Init(void)
 
   /* USER CODE END MX_GPIO_Init_1 */
 
-  /* 使能各 GPIO 端口时钟 */
+  /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
@@ -621,63 +662,63 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOD_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
-  /* 配置 GPIO 输出电平 */
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(GPIOF, LCD_RST_Pin|BEEP_Pin|LED0_Pin|LED1_Pin, GPIO_PIN_RESET);
 
-  /* 配置 GPIO 输出电平 */
-  HAL_GPIO_WritePin(GPIOB, LCD_BL_Pin|SPI1_CS_Pin, GPIO_PIN_SET);
+  /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(GPIOB, SPI1_CS_Pin|LCD_BL_Pin, GPIO_PIN_SET);
 
-  /* 配置 GPIO 输出电平 */
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(dht11_GPIO_Port, dht11_Pin, GPIO_PIN_SET);
 
-  /* 配置按键输入引脚：KEY2/KEY1/KEY0 */
+  /*Configure GPIO pins : KEY2_Pin KEY1_Pin KEY0_Pin */
   GPIO_InitStruct.Pin = KEY2_Pin|KEY1_Pin|KEY0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOE, &GPIO_InitStruct);
 
-  /* 配置 GPIO 引脚：LCD_RST */
+  /*Configure GPIO pin : LCD_RST_Pin */
   GPIO_InitStruct.Pin = LCD_RST_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(LCD_RST_GPIO_Port, &GPIO_InitStruct);
 
-  /* 配置 GPIO 引脚：BEEP */
+  /*Configure GPIO pin : BEEP_Pin */
   GPIO_InitStruct.Pin = BEEP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(BEEP_GPIO_Port, &GPIO_InitStruct);
 
-  /* 配置 GPIO 引脚：LED0/LED1 */
+  /*Configure GPIO pins : LED0_Pin LED1_Pin */
   GPIO_InitStruct.Pin = LED0_Pin|LED1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_MEDIUM;
   HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
-  /* 配置 GPIO 引脚：KEY_UP */
+  /*Configure GPIO pin : KEY_UP_Pin */
   GPIO_InitStruct.Pin = KEY_UP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
   HAL_GPIO_Init(KEY_UP_GPIO_Port, &GPIO_InitStruct);
 
-  /* 配置 GPIO 引脚：LCD_BL */
-  GPIO_InitStruct.Pin = LCD_BL_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-  HAL_GPIO_Init(LCD_BL_GPIO_Port, &GPIO_InitStruct);
-
-  /* 配置 GPIO 引脚：SPI1_CS */
+  /*Configure GPIO pin : SPI1_CS_Pin */
   GPIO_InitStruct.Pin = SPI1_CS_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(SPI1_CS_GPIO_Port, &GPIO_InitStruct);
 
-  /* 配置 GPIO 引脚：DHT11 */
+  /*Configure GPIO pin : LCD_BL_Pin */
+  GPIO_InitStruct.Pin = LCD_BL_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+  HAL_GPIO_Init(LCD_BL_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : dht11_Pin */
   GPIO_InitStruct.Pin = dht11_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
@@ -689,11 +730,7 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
-/**
-  * @brief FSMC 初始化（SRAM1）
-  * @param 无
-  * @retval 无
-  */
+/* FSMC initialization function */
 static void MX_FSMC_Init(void)
 {
 
@@ -708,7 +745,7 @@ static void MX_FSMC_Init(void)
 
   /* USER CODE END FSMC_Init 1 */
 
-  /** 执行 SRAM1 初始化时序
+  /** Perform the SRAM1 memory initialization sequence
   */
   hsram1.Instance = FSMC_NORSRAM_DEVICE;
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
@@ -774,8 +811,8 @@ int fputc(int ch, FILE *f)
 /* USER CODE END 4 */
 
 /**
-  * @brief 错误处理函数
-  * @retval 无
+  * @brief  This function is executed in case of error occurrence.
+  * @retval None
   */
 void Error_Handler(void)
 {
@@ -789,10 +826,11 @@ void Error_Handler(void)
 }
 #ifdef USE_FULL_ASSERT
 /**
-  * @brief 断言失败回调：报告源文件与行号
-  * @param file 源文件名指针
-  * @param line 断言失败行号
-  * @retval 无
+  * @brief  Reports the name of the source file and the source line number
+  *         where the assert_param error has occurred.
+  * @param  file: pointer to the source file name
+  * @param  line: assert_param error line source number
+  * @retval None
   */
 void assert_failed(uint8_t *file, uint32_t line)
 {
@@ -802,4 +840,3 @@ void assert_failed(uint8_t *file, uint32_t line)
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */
-

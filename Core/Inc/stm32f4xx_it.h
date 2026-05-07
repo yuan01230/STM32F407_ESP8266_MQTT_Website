@@ -57,6 +57,7 @@ void PendSV_Handler(void);
 void SysTick_Handler(void);
 void TAMP_STAMP_IRQHandler(void);
 void RTC_WKUP_IRQHandler(void);
+void DMA1_Stream4_IRQHandler(void);
 void USART1_IRQHandler(void);
 void RTC_Alarm_IRQHandler(void);
 void SDIO_IRQHandler(void);
