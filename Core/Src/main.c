@@ -1,27 +1,4 @@
 /* USER CODE BEGIN Header */
-/**
-  ******************************************************************************
-  * @file           : main.c
-  * @brief          : 字体混排与SD文件读写演示程序
-  * @description    : 演示 SDIO + FATFS 文件访问、GB23·12 字库导入与混排显示，
-  *                   并保留串口、LED、按键、TFTLCD 等外设功能。
-  ******************************************************************************
-  * @功能说明:
-  *          1. SD卡初始化和FATFS文件系统挂载
-  *          2. 字库从 SD 导入到外部 Flash（EN25Q128）
-  *          3. 中英文混排显示（GB2312 + ASCII）
-  *          4. 主页面显示 SD 根目录文件数量
-  *          5. 文件列表页支持浏览文件名/扩展名/大小
-  *          6. 文件查看页支持打开并显示文件内容
-  *          7. 串口输出调试信息
-  *          8. TFTLCD 实时显示
-  *          
-  * @按键功能:
-  *          KEY0: 主页面进入文件列表；列表/查看页返回主页面
-  *          KEY1: 文件列表中向下选择；主页面切换颜色
-  *          KEY_UP: 主页面重新导入字库；文件列表中向上选择
-  *          KEY2: 主页面创建测试文件；列表页打开文件；查看页返回列表
-  */
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -29,14 +6,16 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <stdio.h>
+#include "stdio.h"
+#include "string.h"
 #include "../../Library/led/led.h"
-#include "../../Library/tftlcd/tftlcd.h"
 #include "../../Library/key/key.h"
+#include "../../Library/beep/beep.h"
 #include "../../Library/delay/delay.h"
-#include "../../Library/EN25Q128/EN25Q128.h"
-#include "bsp_driver_sd.h"  /* SD卡BSP驱动 */
-#include "../../Library/ui/ui_app.h"
+#include "../../Library/tftlcd/tftlcd.h"
+#include "../../Library/DHT11/dht11.h"
+#include "../../Library/Light_Sensor/light_sensor.h"
+#include "../../Library/mpu6050/MPU6050.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -49,16 +28,10 @@
 
 /* Private macro -------------------------------------------------------------*/
 /* USER CODE BEGIN PM */
-
 /* USER CODE END PM */
 
 /* Private variables ---------------------------------------------------------*/
 ADC_HandleTypeDef hadc3;
-
-I2S_HandleTypeDef hi2s2;
-DMA_HandleTypeDef hdma_spi2_tx;
-
-RTC_HandleTypeDef hrtc;
 
 SD_HandleTypeDef hsd;
 DMA_HandleTypeDef hdma_sdio_rx;
@@ -73,17 +46,27 @@ UART_HandleTypeDef huart1;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
-/* 文件系统相关变量 */
-extern char SDPath[4];              /* SD卡逻辑驱动器路径 */
-extern FATFS SDFatFS;              /* 文件系统对象 */
-extern FIL SDFile;                 /* 文件对象 */
-
-static uint8_t sd_mounted = 0;     /* SD卡挂载状态 */
-
-/* LED闪烁控制 */
-#define LED_BLINK_OK      2
-#define LED_BLINK_ERROR   5
-
+static uint32_t g_uart_test_count = 0U;
+static uint8_t g_mpu_ready = 0U;
+static uint8_t g_mpu_dmp_ready = 0U;
+static delay_nb_timer_t g_sensor_refresh_timer;
+static char g_dht_temp_text[24] = "";
+static char g_dht_humi_text[24] = "";
+static char g_light_adc_text[24] = "";
+static char g_light_volt_text[24] = "";
+static char g_light_level_text[24] = "";
+static char g_ax_text[16] = "";
+static char g_ay_text[16] = "";
+static char g_az_text[16] = "";
+static char g_gx_text[16] = "";
+static char g_gy_text[16] = "";
+static char g_gz_text[16] = "";
+static char g_mpu_temp_text[24] = "";
+static char g_pitch_text[24] = "";
+static char g_roll_text[24] = "";
+static char g_yaw_text[24] = "";
+static char g_status_left_text[32] = "";
+static char g_status_right_text[16] = "";
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -93,17 +76,198 @@ static void MX_DMA_Init(void);
 static void MX_FSMC_Init(void);
 static void MX_SPI1_Init(void);
 static void MX_USART1_UART_Init(void);
-static void MX_TIM2_Init(void);
 static void MX_ADC3_Init(void);
-static void MX_RTC_Init(void);
 static void MX_SDIO_SD_Init(void);
-static void MX_I2S2_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
+static void LCD_Test_ShowWelcome(void);
+static void LCD_Test_Run(void);
+static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *cache, const char *text, uint16_t color);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *cache, const char *text, uint16_t color)
+{
+  char padded_text[24];
+  size_t max_chars = 0U;
+  size_t text_len = 0U;
 
+  if ((cache == NULL) || (text == NULL))
+  {
+    return;
+  }
+
+  max_chars = width / 8U;
+  if (max_chars == 0U)
+  {
+    max_chars = 1U;
+  }
+  if (max_chars > (sizeof(padded_text) - 1U))
+  {
+    max_chars = sizeof(padded_text) - 1U;
+  }
+
+  memset(padded_text, ' ', max_chars);
+  padded_text[max_chars] = '\0';
+  text_len = strlen(text);
+  if (text_len > max_chars)
+  {
+    text_len = max_chars;
+  }
+  memcpy(padded_text, text, text_len);
+
+  if (strcmp(cache, padded_text) == 0)
+  {
+    return;
+  }
+
+  FRONT_COLOR = color;
+  LCD_ShowString(x, y, width, 20U, 16U, (uint8_t *)padded_text);
+  strncpy(cache, padded_text, 23U);
+  cache[23] = '\0';
+}
+
+static void LCD_Test_ShowWelcome(void)
+{
+  BACK_COLOR = WHITE;
+  FRONT_COLOR = BLACK;
+  LCD_Clear(WHITE);
+
+  LCD_Fill(0U, 0U, 319U, 34U, BLUE);
+  FRONT_COLOR = WHITE;
+  LCD_ShowString(8U, 8U, 180U, 24U, 16U, (uint8_t *)"Sensor Dashboard");
+  LCD_ShowString(220U, 8U, 90U, 24U, 16U, (uint8_t *)"500ms");
+
+  FRONT_COLOR = BLACK;
+  LCD_DrawRectangle(6U, 42U, 313U, 110U);
+  LCD_DrawRectangle(6U, 118U, 313U, 196U);
+  LCD_DrawRectangle(6U, 204U, 313U, 332U);
+  LCD_DrawRectangle(6U, 340U, 313U, 438U);
+  LCD_DrawRectangle(6U, 446U, 313U, 474U);
+
+  FRONT_COLOR = BLUE;
+  LCD_ShowString(14U, 48U, 120U, 24U, 16U, (uint8_t *)"DHT11");
+  LCD_ShowString(14U, 124U, 120U, 24U, 16U, (uint8_t *)"Light Sensor");
+  LCD_ShowString(14U, 210U, 150U, 24U, 16U, (uint8_t *)"MPU6050 Raw");
+  LCD_ShowString(14U, 346U, 150U, 24U, 16U, (uint8_t *)"MPU6050 DMP");
+  LCD_ShowString(14U, 452U, 80U, 20U, 16U, (uint8_t *)"Status");
+
+  FRONT_COLOR = BLACK;
+  LCD_ShowString(14U, 72U, 100U, 20U, 16U, (uint8_t *)"Temp:");
+  LCD_ShowString(14U, 92U, 100U, 20U, 16U, (uint8_t *)"Humi:");
+
+  LCD_ShowString(14U, 148U, 100U, 20U, 16U, (uint8_t *)"ADC:");
+  LCD_ShowString(14U, 168U, 100U, 20U, 16U, (uint8_t *)"Volt:");
+  LCD_ShowString(168U, 168U, 80U, 20U, 16U, (uint8_t *)"Level:");
+
+  LCD_ShowString(14U, 236U, 40U, 20U, 16U, (uint8_t *)"AX:");
+  LCD_ShowString(110U, 236U, 40U, 20U, 16U, (uint8_t *)"AY:");
+  LCD_ShowString(206U, 236U, 40U, 20U, 16U, (uint8_t *)"AZ:");
+  LCD_ShowString(14U, 264U, 40U, 20U, 16U, (uint8_t *)"GX:");
+  LCD_ShowString(110U, 264U, 40U, 20U, 16U, (uint8_t *)"GY:");
+  LCD_ShowString(206U, 264U, 40U, 20U, 16U, (uint8_t *)"GZ:");
+  LCD_ShowString(14U, 292U, 60U, 20U, 16U, (uint8_t *)"Temp:");
+
+  LCD_ShowString(14U, 372U, 60U, 20U, 16U, (uint8_t *)"Pitch:");
+  LCD_ShowString(14U, 396U, 60U, 20U, 16U, (uint8_t *)"Roll:");
+  LCD_ShowString(14U, 420U, 60U, 20U, 16U, (uint8_t *)"Yaw:");
+}
+
+static void LCD_Test_Run(void)
+{
+  char line[64];
+  DHT11_Data_t dht11_sample;
+  uint16_t light_adc = 0U;
+  float light_voltage = 0.0f;
+  LightLevel_t light_level = LIGHT_LEVEL_DARK;
+  short ax = 0;
+  short ay = 0;
+  short az = 0;
+  short gx = 0;
+  short gy = 0;
+  short gz = 0;
+  float pitch = 0.0f;
+  float roll = 0.0f;
+  float yaw = 0.0f;
+
+  BACK_COLOR = WHITE;
+  if (DHT11_ReadData(&dht11_sample) == 0U)
+  {
+    snprintf(line, sizeof(line), "%u.%u C", (unsigned int)dht11_sample.temp_int, (unsigned int)dht11_sample.temp_dec);
+    LCD_UpdateValueLine(120U, 72U, 180U, g_dht_temp_text, line, BLACK);
+    snprintf(line, sizeof(line), "%u.%u %%RH", (unsigned int)dht11_sample.humi_int, (unsigned int)dht11_sample.humi_dec);
+    LCD_UpdateValueLine(120U, 92U, 180U, g_dht_humi_text, line, BLACK);
+  }
+  else
+  {
+    LCD_UpdateValueLine(120U, 72U, 180U, g_dht_temp_text, "Read failed", RED);
+    LCD_UpdateValueLine(120U, 92U, 180U, g_dht_humi_text, "--", RED);
+  }
+
+  light_adc = LightSensor_ReadADCAverage(3U);
+  light_voltage = LightSensor_ConvertToVoltage(light_adc);
+  light_level = LightSensor_GetLevelByADC(light_adc);
+  snprintf(line, sizeof(line), "%u", (unsigned int)light_adc);
+  LCD_UpdateValueLine(80U, 148U, 80U, g_light_adc_text, line, BLACK);
+  snprintf(line, sizeof(line), "%.3f V", light_voltage);
+  LCD_UpdateValueLine(80U, 168U, 78U, g_light_volt_text, line, BLACK);
+  LCD_UpdateValueLine(220U, 168U, 82U, g_light_level_text, LightSensor_LevelToString(light_level), BLACK);
+
+  if ((g_mpu_ready != 0U) &&
+      (MPU_Get_Accelerometer(&ax, &ay, &az) == 0U) &&
+      (MPU_Get_Gyroscope(&gx, &gy, &gz) == 0U))
+  {
+    snprintf(line, sizeof(line), "%d", ax);
+    LCD_UpdateValueLine(42U, 236U, 56U, g_ax_text, line, BLACK);
+    snprintf(line, sizeof(line), "%d", ay);
+    LCD_UpdateValueLine(138U, 236U, 56U, g_ay_text, line, BLACK);
+    snprintf(line, sizeof(line), "%d", az);
+    LCD_UpdateValueLine(234U, 236U, 72U, g_az_text, line, BLACK);
+    snprintf(line, sizeof(line), "%d", gx);
+    LCD_UpdateValueLine(42U, 264U, 56U, g_gx_text, line, BLACK);
+    snprintf(line, sizeof(line), "%d", gy);
+    LCD_UpdateValueLine(138U, 264U, 56U, g_gy_text, line, BLACK);
+    snprintf(line, sizeof(line), "%d", gz);
+    LCD_UpdateValueLine(234U, 264U, 72U, g_gz_text, line, BLACK);
+    snprintf(line, sizeof(line), "%.2f C", ((float)MPU_Get_Temperature()) / 100.0f);
+    LCD_UpdateValueLine(78U, 292U, 90U, g_mpu_temp_text, line, BLACK);
+  }
+  else
+  {
+    LCD_UpdateValueLine(78U, 292U, 90U, g_mpu_temp_text, "Raw failed", RED);
+  }
+
+  if ((g_mpu_dmp_ready != 0U) && (mpu_dmp_get_data(&pitch, &roll, &yaw) == 0U))
+  {
+    snprintf(line, sizeof(line), "%.2f deg", pitch);
+    LCD_UpdateValueLine(78U, 372U, 130U, g_pitch_text, line, BLACK);
+    snprintf(line, sizeof(line), "%.2f deg", roll);
+    LCD_UpdateValueLine(78U, 396U, 130U, g_roll_text, line, BLACK);
+    snprintf(line, sizeof(line), "%.2f deg", yaw);
+    LCD_UpdateValueLine(78U, 420U, 130U, g_yaw_text, line, BLACK);
+  }
+  else
+  {
+    if (g_pitch_text[0] == '\0')
+    {
+      LCD_UpdateValueLine(78U, 372U, 130U, g_pitch_text, "--", RED);
+    }
+    if (g_roll_text[0] == '\0')
+    {
+      LCD_UpdateValueLine(78U, 396U, 130U, g_roll_text, "--", RED);
+    }
+    if (g_yaw_text[0] == '\0')
+    {
+      LCD_UpdateValueLine(78U, 420U, 130U, g_yaw_text, "--", RED);
+    }
+  }
+
+  snprintf(line, sizeof(line), "Tick:%lu  Cnt:%lu", HAL_GetTick(), g_uart_test_count);
+  LCD_UpdateValueLine(70U, 452U, 170U, g_status_left_text, line, BLACK);
+  snprintf(line, sizeof(line), "M%u D%u", (unsigned int)g_mpu_ready, (unsigned int)g_mpu_dmp_ready);
+  LCD_UpdateValueLine(244U, 452U, 60U, g_status_right_text, line, BLACK);
+}
 /* USER CODE END 0 */
 
 /**
@@ -114,7 +278,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-
   /* USER CODE END 1 */
 
   /* MCU Configuration--------------------------------------------------------*/
@@ -123,15 +286,12 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
   /* USER CODE END Init */
 
   /* Configure the system clock */
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
-  /* 延时函数初始化（必须在系统时钟配置后立即初始化） */
-  delay_init();
   /* USER CODE END SysInit */
 
   /* Initialize all configured peripherals */
@@ -140,107 +300,47 @@ int main(void)
   MX_FSMC_Init();
   MX_SPI1_Init();
   MX_USART1_UART_Init();
-  MX_TIM2_Init();
   MX_ADC3_Init();
-  MX_RTC_Init();
   MX_SDIO_SD_Init();
   MX_FATFS_Init();
-  MX_I2S2_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
-
-  printf("\r\n\r");
-  printf("========================================\r\n");
-  printf("  SDIO SD Card Example - STM32F407\r\n");
-  printf("========================================\r\n");
-
-  /* 1. 外设初始化 */
   LED_Init();
-  /* 按键GPIO已在MX_GPIO_Init中初始化，无需额外调用Key_Init */
+  Key_Init();
+  BEEP_Init();
+  delay_init();
+  delay_nb_init();
   TFTLCD_Init();
-  EN25QXX_Init();
+  DHT11_Init();
+  LightSensor_Init();
+  g_mpu_ready = (MPU_Init() == 0U) ? 1U : 0U;
+  g_mpu_dmp_ready = ((g_mpu_ready != 0U) && (mpu_dmp_init() == 0U)) ? 1U : 0U;
+  LCD_Test_ShowWelcome();
+  LCD_Test_Run();
+  delay_nb_start_ms(&g_sensor_refresh_timer, 500U);
 
-  /* 2. 先进入 UI，显示初始化提示页 */
-  /* ---------------- UI 调用流程（初始化阶段） ----------------
-   * 1) UI_Init()                : 初始化 UI 页面状态/计时基线
-   * 2) UI_SetSdMounted(0U)      : 先置为未挂载，避免状态未同步
-   * 3) UI_ShowMainPage()        : 提前显示主页面占位状态
-   * 4) 完成 SD 挂载后再次 UI_SetSdMounted(sd_mounted)
-   * 5) UI_FontSystemInit()      : 检查/导入字库
-   * 6) UI_ShowMainPage()        : 以最新状态重绘主页面
-   * 7) UI_PrintHelp()           : 串口输出按键帮助
-   * ----------------------------------------------------------- */
-  UI_Init();
-  UI_SetSdMounted(0U);
-  UI_ShowMainPage();
-
-  /* 3. SD卡初始化和挂载（用于字库导入与文件读写） */
-  printf("\r\n[Main] Initializing SD card...\r\n");
-
-  /* 先初始化SD卡 */
-  if(BSP_SD_Init() == MSD_OK)
-  {
-      printf("[Main] SD card initialized successfully\r\n");
-
-      /* 等待SD卡就绪 */
-      if(BSP_SD_GetCardState() == SD_TRANSFER_OK)
-      {
-          /* 挂载文件系统 */
-          FRESULT res = f_mount(&SDFatFS, SDPath, 1);
-          if(res == FR_OK)
-          {
-              sd_mounted = 1;
-              printf("[Main] SD card mounted successfully!\r\n");
-              LED_Blink(LED0, 200, LED_BLINK_OK);
-          }
-          else
-          {
-              printf("[Main] f_mount failed: %d\r\n", res);
-              LED_Blink(LED0, 100, LED_BLINK_ERROR);
-          }
-      }
-      else
-      {
-          printf("[Main] SD card not ready!\r\n");
-          LED_Blink(LED0, 100, LED_BLINK_ERROR);
-      }
-  }
-  else
-  {
-      printf("[Main] SD card init failed!\r\n");
-      LED_Blink(LED0, 100, LED_BLINK_ERROR);
-  }
-
-  /* 4. 同步 SD 状态到 UI 模块 */
-  UI_SetSdMounted(sd_mounted);
-
-  /* 5. 初始化字库并显示主页面 */
-  UI_FontSystemInit();
-  UI_ShowMainPage();
-  UI_PrintHelp();
+  printf("\r\n===== Sensor Dashboard =====\r\n");
+  printf("Single page refresh interval: 500 ms\r\n");
+  printf("MPU base init = %u, DMP init = %u\r\n", (unsigned int)g_mpu_ready, (unsigned int)g_mpu_dmp_ready);
+  printf("=============================\r\n");
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    if (delay_nb_is_expired(&g_sensor_refresh_timer) == 1U)
+    {
+      g_uart_test_count++;
+      LED_Toggle(LED0);
+      LCD_Test_Run();
+      delay_nb_start_ms(&g_sensor_refresh_timer, 500U);
+    }
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    /* ---------------- UI 调用流程（循环阶段） ----------------
-     * A) Key_Scan()   : 采集当前按键
-     * B) UI_Tick()    : 处理倒计时、自动返回、秒级局刷
-     * C) UI_HandleKey : 仅在有按键时分发事件
-     * -------------------------------------------------------- */
-    KeyName_t key = Key_Scan();
-    UI_Tick();
-    if (key != KEY_NONE)
-    {
-        UI_HandleKey(key);
-    }
-
-    HAL_Delay(10);
+  }
   /* USER CODE END 3 */
-}
 }
 
 /**
@@ -260,8 +360,7 @@ void SystemClock_Config(void)
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI|RCC_OSCILLATORTYPE_LSE;
-  RCC_OscInitStruct.LSEState = RCC_LSE_ON;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
   RCC_OscInitStruct.HSIState = RCC_HSI_ON;
   RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
@@ -299,13 +398,11 @@ static void MX_ADC3_Init(void)
 {
 
   /* USER CODE BEGIN ADC3_Init 0 */
-
   /* USER CODE END ADC3_Init 0 */
 
   ADC_ChannelConfTypeDef sConfig = {0};
 
   /* USER CODE BEGIN ADC3_Init 1 */
-
   /* USER CODE END ADC3_Init 1 */
 
   /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
@@ -331,145 +428,13 @@ static void MX_ADC3_Init(void)
   */
   sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
   {
     Error_Handler();
   }
   /* USER CODE BEGIN ADC3_Init 2 */
-
   /* USER CODE END ADC3_Init 2 */
-
-}
-
-/**
-  * @brief I2S2 Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_I2S2_Init(void)
-{
-
-  /* USER CODE BEGIN I2S2_Init 0 */
-
-  /* USER CODE END I2S2_Init 0 */
-
-  /* USER CODE BEGIN I2S2_Init 1 */
-
-  /* USER CODE END I2S2_Init 1 */
-  hi2s2.Instance = SPI2;
-  hi2s2.Init.Mode = I2S_MODE_MASTER_TX;
-  hi2s2.Init.Standard = I2S_STANDARD_PHILIPS;
-  hi2s2.Init.DataFormat = I2S_DATAFORMAT_16B;
-  hi2s2.Init.MCLKOutput = I2S_MCLKOUTPUT_ENABLE;
-  hi2s2.Init.AudioFreq = I2S_AUDIOFREQ_44K;
-  hi2s2.Init.CPOL = I2S_CPOL_LOW;
-  hi2s2.Init.ClockSource = I2S_CLOCK_PLL;
-  hi2s2.Init.FullDuplexMode = I2S_FULLDUPLEXMODE_DISABLE;
-  if (HAL_I2S_Init(&hi2s2) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN I2S2_Init 2 */
-
-  /* USER CODE END I2S2_Init 2 */
-
-}
-
-/**
-  * @brief RTC Initialization Function
-  * @param None
-  * @retval None
-  */
-static void MX_RTC_Init(void)
-{
-
-  /* USER CODE BEGIN RTC_Init 0 */
-
-  /* USER CODE END RTC_Init 0 */
-
-  RTC_TimeTypeDef sTime = {0};
-  RTC_DateTypeDef sDate = {0};
-  RTC_AlarmTypeDef sAlarm = {0};
-
-  /* USER CODE BEGIN RTC_Init 1 */
-
-  /* USER CODE END RTC_Init 1 */
-
-  /** Initialize RTC Only
-  */
-  hrtc.Instance = RTC;
-  hrtc.Init.HourFormat = RTC_HOURFORMAT_24;
-  hrtc.Init.AsynchPrediv = 127;
-  hrtc.Init.SynchPrediv = 255;
-  hrtc.Init.OutPut = RTC_OUTPUT_DISABLE;
-  hrtc.Init.OutPutPolarity = RTC_OUTPUT_POLARITY_HIGH;
-  hrtc.Init.OutPutType = RTC_OUTPUT_TYPE_OPENDRAIN;
-  if (HAL_RTC_Init(&hrtc) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /* USER CODE BEGIN Check_RTC_BKUP */
-
-  /* USER CODE END Check_RTC_BKUP */
-
-  /** Initialize RTC and set the Time and Date
-  */
-  sTime.Hours = 0x10;
-  sTime.Minutes = 0x20;
-  sTime.Seconds = 0x30;
-  sTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
-  sTime.StoreOperation = RTC_STOREOPERATION_RESET;
-  if (HAL_RTC_SetTime(&hrtc, &sTime, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  sDate.WeekDay = RTC_WEEKDAY_FRIDAY;
-  sDate.Month = RTC_MONTH_MARCH;
-  sDate.Date = 0x1;
-  sDate.Year = 0x26;
-
-  if (HAL_RTC_SetDate(&hrtc, &sDate, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Enable the Alarm A
-  */
-  sAlarm.AlarmTime.Hours = 0x0;
-  sAlarm.AlarmTime.Minutes = 0x0;
-  sAlarm.AlarmTime.Seconds = 0x35;
-  sAlarm.AlarmTime.SubSeconds = 0x0;
-  sAlarm.AlarmTime.DayLightSaving = RTC_DAYLIGHTSAVING_NONE;
-  sAlarm.AlarmTime.StoreOperation = RTC_STOREOPERATION_RESET;
-  sAlarm.AlarmMask = RTC_ALARMMASK_DATEWEEKDAY|RTC_ALARMMASK_HOURS
-                              |RTC_ALARMMASK_MINUTES;
-  sAlarm.AlarmSubSecondMask = RTC_ALARMSUBSECONDMASK_ALL;
-  sAlarm.AlarmDateWeekDaySel = RTC_ALARMDATEWEEKDAYSEL_DATE;
-  sAlarm.AlarmDateWeekDay = 0x1;
-  sAlarm.Alarm = RTC_ALARM_A;
-  if (HAL_RTC_SetAlarm_IT(&hrtc, &sAlarm, RTC_FORMAT_BCD) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Enable the WakeUp
-  */
-  if (HAL_RTCEx_SetWakeUpTimer_IT(&hrtc, 9, RTC_WAKEUPCLOCK_CK_SPRE_16BITS) != HAL_OK)
-  {
-    Error_Handler();
-  }
-
-  /** Enable the TimeStamp
-  */
-  if (HAL_RTCEx_SetTimeStamp_IT(&hrtc, RTC_TIMESTAMPEDGE_RISING, RTC_TIMESTAMPPIN_DEFAULT) != HAL_OK)
-  {
-    Error_Handler();
-  }
-  /* USER CODE BEGIN RTC_Init 2 */
-
-  /* USER CODE END RTC_Init 2 */
 
 }
 
@@ -482,11 +447,9 @@ static void MX_SDIO_SD_Init(void)
 {
 
   /* USER CODE BEGIN SDIO_Init 0 */
-
   /* USER CODE END SDIO_Init 0 */
 
   /* USER CODE BEGIN SDIO_Init 1 */
-
   /* USER CODE END SDIO_Init 1 */
   hsd.Instance = SDIO;
   hsd.Init.ClockEdge = SDIO_CLOCK_EDGE_RISING;
@@ -496,7 +459,6 @@ static void MX_SDIO_SD_Init(void)
   hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
   hsd.Init.ClockDiv = 0;
   /* USER CODE BEGIN SDIO_Init 2 */
-
   /* USER CODE END SDIO_Init 2 */
 
 }
@@ -510,11 +472,9 @@ static void MX_SPI1_Init(void)
 {
 
   /* USER CODE BEGIN SPI1_Init 0 */
-
   /* USER CODE END SPI1_Init 0 */
 
   /* USER CODE BEGIN SPI1_Init 1 */
-
   /* USER CODE END SPI1_Init 1 */
   /* SPI1 parameter configuration*/
   hspi1.Instance = SPI1;
@@ -534,7 +494,6 @@ static void MX_SPI1_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN SPI1_Init 2 */
-
   /* USER CODE END SPI1_Init 2 */
 
 }
@@ -593,11 +552,9 @@ static void MX_USART1_UART_Init(void)
 {
 
   /* USER CODE BEGIN USART1_Init 0 */
-
   /* USER CODE END USART1_Init 0 */
 
   /* USER CODE BEGIN USART1_Init 1 */
-
   /* USER CODE END USART1_Init 1 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
@@ -612,7 +569,6 @@ static void MX_USART1_UART_Init(void)
     Error_Handler();
   }
   /* USER CODE BEGIN USART1_Init 2 */
-
   /* USER CODE END USART1_Init 2 */
 
 }
@@ -624,18 +580,14 @@ static void MX_DMA_Init(void)
 {
 
   /* DMA controller clock enable */
-  __HAL_RCC_DMA1_CLK_ENABLE();
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
-  /* DMA1_Stream4_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 0, 0);
-  HAL_NVIC_EnableIRQ(DMA1_Stream4_IRQn);
   /* DMA2_Stream3_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Stream3_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream3_IRQn);
   /* DMA2_Stream6_IRQn interrupt configuration */
-  HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 0, 0);
+  HAL_NVIC_SetPriority(DMA2_Stream6_IRQn, 1, 0);
   HAL_NVIC_EnableIRQ(DMA2_Stream6_IRQn);
 
 }
@@ -649,17 +601,15 @@ static void MX_GPIO_Init(void)
 {
   GPIO_InitTypeDef GPIO_InitStruct = {0};
   /* USER CODE BEGIN MX_GPIO_Init_1 */
-
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOE_CLK_ENABLE();
-  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
-  __HAL_RCC_GPIOH_CLK_ENABLE();
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
   __HAL_RCC_GPIOD_CLK_ENABLE();
+  __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOG_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
@@ -669,7 +619,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOB, SPI1_CS_Pin|LCD_BL_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(dht11_GPIO_Port, dht11_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : KEY2_Pin KEY1_Pin KEY0_Pin */
   GPIO_InitStruct.Pin = KEY2_Pin|KEY1_Pin|KEY0_Pin;
@@ -718,15 +668,14 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
   HAL_GPIO_Init(LCD_BL_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : dht11_Pin */
-  GPIO_InitStruct.Pin = dht11_Pin;
+  /*Configure GPIO pin : DHT11_Pin */
+  GPIO_InitStruct.Pin = DHT11_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
-  HAL_GPIO_Init(dht11_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(DHT11_GPIO_Port, &GPIO_InitStruct);
 
   /* USER CODE BEGIN MX_GPIO_Init_2 */
-
   /* USER CODE END MX_GPIO_Init_2 */
 }
 
@@ -735,14 +684,12 @@ static void MX_FSMC_Init(void)
 {
 
   /* USER CODE BEGIN FSMC_Init 0 */
-
   /* USER CODE END FSMC_Init 0 */
 
   FSMC_NORSRAM_TimingTypeDef Timing = {0};
   FSMC_NORSRAM_TimingTypeDef ExtTiming = {0};
 
   /* USER CODE BEGIN FSMC_Init 1 */
-
   /* USER CODE END FSMC_Init 1 */
 
   /** Perform the SRAM1 memory initialization sequence
@@ -787,27 +734,10 @@ static void MX_FSMC_Init(void)
   }
 
   /* USER CODE BEGIN FSMC_Init 2 */
-
   /* USER CODE END FSMC_Init 2 */
 }
 
 /* USER CODE BEGIN 4 */
-
-/**
- * @brief printf 重定向函数
- * @param ch 要发送的字符
- * @param f 标准输出文件指针（未使用，仅为函数签名兼容）
- * @retval int 已发送字符
- * @details
- * 通过 USART1 发送单字符，实现标准库 printf 到串口输出。
- */
-int fputc(int ch, FILE *f)
-{
-  HAL_UART_Transmit(&huart1, (uint8_t *)&ch, 1, HAL_MAX_DELAY);
-  return ch;
-}
-
-/* UI logic moved to Library/ui/ui_app.c */
 /* USER CODE END 4 */
 
 /**
@@ -817,11 +747,6 @@ int fputc(int ch, FILE *f)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* 用户可在此添加错误上报逻辑 */
-  __disable_irq();
-  while (1)
-  {
-  }
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
@@ -835,8 +760,6 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* 用户可在此添加断言日志输出，例如：
-     printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

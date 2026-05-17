@@ -23,8 +23,7 @@
 #include <string.h>
 #include <math.h>
 #include "inv_mpu.h"
-#include "MPU6050.h"
-
+#include "../../mpu6050/MPU6050.h"
 // STM32 HAL Adaptation
 #define i2c_write(a, b, c, d) IIC_Write_Len(a, b, c, (u8*)d)
 #define i2c_read  IIC_Read_Len

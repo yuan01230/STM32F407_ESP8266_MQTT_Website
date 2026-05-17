@@ -1,45 +1,51 @@
-//
-// Created by 标语 on 26-3-6.
-//
-
-#ifndef BEEP_H
+﻿#ifndef BEEP_H
 #define BEEP_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 #include "main.h"
 
 /**
- * @brief BEEP 状态枚举
+ * @brief 蜂鸣器逻辑状态定义
  */
 typedef enum {
-    BEEP_OFF = 0, // 关闭
-    BEEP_ON = 1   // 打开
+    BEEP_OFF = 0, /**< 关闭蜂鸣器 */
+    BEEP_ON = 1   /**< 打开蜂鸣器 */
 } BEEP_Status_t;
 
-
-/* 函数声明 */
+/**
+ * @brief 初始化蜂鸣器驱动
+ * @note
+ * - 该函数不初始化 GPIO 外设
+ * - 当前策略为上电后默认关闭蜂鸣器
+ */
+void BEEP_Init(void);
 
 /**
-  * @brief  打开蜂鸣器
-  * @note   假设高电平触发蜂鸣器
-  */
+ * @brief 打开蜂鸣器
+ */
 void BEEP_On(void);
 
 /**
-  * @brief  关闭蜂鸣器
-  * @note   假设低电平关闭蜂鸣器
-  */
+ * @brief 关闭蜂鸣器
+ */
 void BEEP_Off(void);
 
 /**
-  * @brief  翻转蜂鸣器状态
-  */
+ * @brief 翻转蜂鸣器当前状态
+ */
 void BEEP_Toggle(void);
 
 /**
-  * @brief  设置蜂鸣器状态
-  * @param  status: BEEP_ON 或 BEEP_OFF
-  */
+ * @brief 设置蜂鸣器状态
+ * @param status 目标状态：BEEP_ON 或 BEEP_OFF
+ */
 void BEEP_Set(BEEP_Status_t status);
 
+#ifdef __cplusplus
+}
+#endif
 
-#endif //BEEP_H
+#endif

@@ -23,8 +23,6 @@
 /* USER CODE BEGIN Includes */
 
 /* USER CODE END Includes */
-extern DMA_HandleTypeDef hdma_spi2_tx;
-
 extern DMA_HandleTypeDef hdma_sdio_rx;
 
 extern DMA_HandleTypeDef hdma_sdio_tx;
@@ -103,10 +101,10 @@ void HAL_ADC_MspInit(ADC_HandleTypeDef* hadc)
     /**ADC3 GPIO Configuration
     PF7     ------> ADC3_IN5
     */
-    GPIO_InitStruct.Pin = Light_Sensor_Pin;
+    GPIO_InitStruct.Pin = GPIO_PIN_7;
     GPIO_InitStruct.Mode = GPIO_MODE_ANALOG;
     GPIO_InitStruct.Pull = GPIO_NOPULL;
-    HAL_GPIO_Init(Light_Sensor_GPIO_Port, &GPIO_InitStruct);
+    HAL_GPIO_Init(GPIOF, &GPIO_InitStruct);
 
     /* USER CODE BEGIN ADC3_MspInit 1 */
 
@@ -135,192 +133,11 @@ void HAL_ADC_MspDeInit(ADC_HandleTypeDef* hadc)
     /**ADC3 GPIO Configuration
     PF7     ------> ADC3_IN5
     */
-    HAL_GPIO_DeInit(Light_Sensor_GPIO_Port, Light_Sensor_Pin);
+    HAL_GPIO_DeInit(GPIOF, GPIO_PIN_7);
 
     /* USER CODE BEGIN ADC3_MspDeInit 1 */
 
     /* USER CODE END ADC3_MspDeInit 1 */
-  }
-
-}
-
-/**
-  * @brief I2S MSP Initialization
-  * This function configures the hardware resources used in this example
-  * @param hi2s: I2S handle pointer
-  * @retval None
-  */
-void HAL_I2S_MspInit(I2S_HandleTypeDef* hi2s)
-{
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  if(hi2s->Instance==SPI2)
-  {
-    /* USER CODE BEGIN SPI2_MspInit 0 */
-
-    /* USER CODE END SPI2_MspInit 0 */
-
-  /** Initializes the peripherals clock
-  */
-    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_I2S;
-    PeriphClkInitStruct.PLLI2S.PLLI2SN = 192;
-    PeriphClkInitStruct.PLLI2S.PLLI2SR = 2;
-    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    /* Peripheral clock enable */
-    __HAL_RCC_SPI2_CLK_ENABLE();
-
-    __HAL_RCC_GPIOC_CLK_ENABLE();
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-    /**I2S2 GPIO Configuration
-    PC3     ------> I2S2_SD
-    PB12     ------> I2S2_WS
-    PB13     ------> I2S2_CK
-    PC6     ------> I2S2_MCK
-    */
-    GPIO_InitStruct.Pin = GPIO_PIN_3|GPIO_PIN_6;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
-    HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
-
-    GPIO_InitStruct.Pin = GPIO_PIN_12|GPIO_PIN_13;
-    GPIO_InitStruct.Mode = GPIO_MODE_AF_PP;
-    GPIO_InitStruct.Pull = GPIO_NOPULL;
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
-    GPIO_InitStruct.Alternate = GPIO_AF5_SPI2;
-    HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
-
-    /* I2S2 DMA Init */
-    /* SPI2_TX Init */
-    hdma_spi2_tx.Instance = DMA1_Stream4;
-    hdma_spi2_tx.Init.Channel = DMA_CHANNEL_0;
-    hdma_spi2_tx.Init.Direction = DMA_MEMORY_TO_PERIPH;
-    hdma_spi2_tx.Init.PeriphInc = DMA_PINC_DISABLE;
-    hdma_spi2_tx.Init.MemInc = DMA_MINC_ENABLE;
-    hdma_spi2_tx.Init.PeriphDataAlignment = DMA_PDATAALIGN_HALFWORD;
-    hdma_spi2_tx.Init.MemDataAlignment = DMA_MDATAALIGN_HALFWORD;
-    hdma_spi2_tx.Init.Mode = DMA_CIRCULAR;
-    hdma_spi2_tx.Init.Priority = DMA_PRIORITY_HIGH;
-    hdma_spi2_tx.Init.FIFOMode = DMA_FIFOMODE_DISABLE;
-    if (HAL_DMA_Init(&hdma_spi2_tx) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    __HAL_LINKDMA(hi2s,hdmatx,hdma_spi2_tx);
-
-    /* USER CODE BEGIN SPI2_MspInit 1 */
-
-    /* USER CODE END SPI2_MspInit 1 */
-
-  }
-
-}
-
-/**
-  * @brief I2S MSP De-Initialization
-  * This function freeze the hardware resources used in this example
-  * @param hi2s: I2S handle pointer
-  * @retval None
-  */
-void HAL_I2S_MspDeInit(I2S_HandleTypeDef* hi2s)
-{
-  if(hi2s->Instance==SPI2)
-  {
-    /* USER CODE BEGIN SPI2_MspDeInit 0 */
-
-    /* USER CODE END SPI2_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_SPI2_CLK_DISABLE();
-
-    /**I2S2 GPIO Configuration
-    PC3     ------> I2S2_SD
-    PB12     ------> I2S2_WS
-    PB13     ------> I2S2_CK
-    PC6     ------> I2S2_MCK
-    */
-    HAL_GPIO_DeInit(GPIOC, GPIO_PIN_3|GPIO_PIN_6);
-
-    HAL_GPIO_DeInit(GPIOB, GPIO_PIN_12|GPIO_PIN_13);
-
-    /* I2S2 DMA DeInit */
-    HAL_DMA_DeInit(hi2s->hdmatx);
-    /* USER CODE BEGIN SPI2_MspDeInit 1 */
-
-    /* USER CODE END SPI2_MspDeInit 1 */
-  }
-
-}
-
-/**
-  * @brief RTC MSP Initialization
-  * This function configures the hardware resources used in this example
-  * @param hrtc: RTC handle pointer
-  * @retval None
-  */
-void HAL_RTC_MspInit(RTC_HandleTypeDef* hrtc)
-{
-  RCC_PeriphCLKInitTypeDef PeriphClkInitStruct = {0};
-  if(hrtc->Instance==RTC)
-  {
-    /* USER CODE BEGIN RTC_MspInit 0 */
-
-    /* USER CODE END RTC_MspInit 0 */
-
-  /** Initializes the peripherals clock
-  */
-    PeriphClkInitStruct.PeriphClockSelection = RCC_PERIPHCLK_RTC;
-    PeriphClkInitStruct.RTCClockSelection = RCC_RTCCLKSOURCE_LSE;
-    if (HAL_RCCEx_PeriphCLKConfig(&PeriphClkInitStruct) != HAL_OK)
-    {
-      Error_Handler();
-    }
-
-    /* Peripheral clock enable */
-    __HAL_RCC_RTC_ENABLE();
-    /* RTC interrupt Init */
-    HAL_NVIC_SetPriority(TAMP_STAMP_IRQn, 1, 0);
-    HAL_NVIC_EnableIRQ(TAMP_STAMP_IRQn);
-    HAL_NVIC_SetPriority(RTC_WKUP_IRQn, 1, 0);
-    HAL_NVIC_EnableIRQ(RTC_WKUP_IRQn);
-    HAL_NVIC_SetPriority(RTC_Alarm_IRQn, 1, 0);
-    HAL_NVIC_EnableIRQ(RTC_Alarm_IRQn);
-    /* USER CODE BEGIN RTC_MspInit 1 */
-
-    /* USER CODE END RTC_MspInit 1 */
-
-  }
-
-}
-
-/**
-  * @brief RTC MSP De-Initialization
-  * This function freeze the hardware resources used in this example
-  * @param hrtc: RTC handle pointer
-  * @retval None
-  */
-void HAL_RTC_MspDeInit(RTC_HandleTypeDef* hrtc)
-{
-  if(hrtc->Instance==RTC)
-  {
-    /* USER CODE BEGIN RTC_MspDeInit 0 */
-
-    /* USER CODE END RTC_MspDeInit 0 */
-    /* Peripheral clock disable */
-    __HAL_RCC_RTC_DISABLE();
-
-    /* RTC interrupt DeInit */
-    HAL_NVIC_DisableIRQ(TAMP_STAMP_IRQn);
-    HAL_NVIC_DisableIRQ(RTC_WKUP_IRQn);
-    HAL_NVIC_DisableIRQ(RTC_Alarm_IRQn);
-    /* USER CODE BEGIN RTC_MspDeInit 1 */
-
-    /* USER CODE END RTC_MspDeInit 1 */
   }
 
 }
@@ -411,7 +228,7 @@ void HAL_SD_MspInit(SD_HandleTypeDef* hsd)
     __HAL_LINKDMA(hsd,hdmatx,hdma_sdio_tx);
 
     /* SDIO interrupt Init */
-    HAL_NVIC_SetPriority(SDIO_IRQn, 0, 0);
+    HAL_NVIC_SetPriority(SDIO_IRQn, 1, 0);
     HAL_NVIC_EnableIRQ(SDIO_IRQn);
     /* USER CODE BEGIN SDIO_MspInit 1 */
 

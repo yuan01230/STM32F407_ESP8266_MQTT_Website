@@ -65,8 +65,6 @@ void Error_Handler(void);
 #define KEY0_GPIO_Port GPIOE
 #define LCD_RST_Pin GPIO_PIN_6
 #define LCD_RST_GPIO_Port GPIOF
-#define Light_Sensor_Pin GPIO_PIN_7
-#define Light_Sensor_GPIO_Port GPIOF
 #define BEEP_Pin GPIO_PIN_8
 #define BEEP_GPIO_Port GPIOF
 #define LED0_Pin GPIO_PIN_9
@@ -79,8 +77,8 @@ void Error_Handler(void);
 #define SPI1_CS_GPIO_Port GPIOB
 #define LCD_BL_Pin GPIO_PIN_15
 #define LCD_BL_GPIO_Port GPIOB
-#define dht11_Pin GPIO_PIN_9
-#define dht11_GPIO_Port GPIOG
+#define DHT11_Pin GPIO_PIN_9
+#define DHT11_GPIO_Port GPIOG
 
 /* USER CODE BEGIN Private defines */
 

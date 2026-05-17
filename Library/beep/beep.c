@@ -1,48 +1,40 @@
-//
-// Created by 标语 on 26-3-6.
-//
+﻿#include "beep.h"
+#include "gpio_device.h"
+#include "board_drv_config.h"
 
-#include "beep.h"
+/*
+ * 蜂鸣器驱动设计说明：
+ * - 通过 BOARD_BEEP_CONFIG 静态绑定板级引脚与有效电平
+ * - 通过 gpio_device_write/toggle 统一处理逻辑电平映射
+ */
+static const gpio_device_t s_beep = BOARD_BEEP_CONFIG;
 
-/**
-  * @brief  打开蜂鸣器
-  * @note   设置 BEEP 引脚为高电平
-  */
+void BEEP_Init(void)
+{
+    /* 初始化后默认关闭蜂鸣器，避免误鸣 */
+    BEEP_Off();
+}
+
 void BEEP_On(void)
 {
-    HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_SET);
+    /* 逻辑 1：打开蜂鸣器 */
+    gpio_device_write(&s_beep, 1U);
 }
 
-/**
-  * @brief  关闭蜂鸣器
-  * @note   设置 BEEP 引脚为低电平
-  */
 void BEEP_Off(void)
 {
-    HAL_GPIO_WritePin(BEEP_GPIO_Port, BEEP_Pin, GPIO_PIN_RESET);
+    /* 逻辑 0：关闭蜂鸣器 */
+    gpio_device_write(&s_beep, 0U);
 }
 
-/**
-  * @brief  翻转蜂鸣器状态
-  * @note   翻转 BEEP 引脚电平
-  */
 void BEEP_Toggle(void)
 {
-    HAL_GPIO_TogglePin(BEEP_GPIO_Port, BEEP_Pin);
+    /* 翻转当前物理引脚电平 */
+    gpio_device_toggle(&s_beep);
 }
 
-/**
-  * @brief  设置蜂鸣器状态
-  * @param  status: BEEP_ON 或 BEEP_OFF
-  */
 void BEEP_Set(BEEP_Status_t status)
 {
-    if (status == BEEP_ON)
-    {
-        BEEP_On();
-    }
-    else
-    {
-        BEEP_Off();
-    }
+    /* 根据目标状态统一写入逻辑电平 */
+    gpio_device_write(&s_beep, (status == BEEP_ON) ? 1U : 0U);
 }

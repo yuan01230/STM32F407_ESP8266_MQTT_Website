@@ -10,7 +10,7 @@
 // ============================================================================
 // 引脚定义 (请根据实际硬件修改)
 // ============================================================================
-// 默认使用 PB8 (SCL) 和 PB9 (SDA)
+// 原理图 IIC 总线: PB8 -> IIC_SCL, PB9 -> IIC_SDA。
 #ifndef I2C_SCL_PORT
 #define I2C_SCL_PORT    GPIOB
 #endif
@@ -90,5 +90,7 @@ void SoftwareI2C_SendACK(uint8_t ack);
  * @return 0: ACK 接收成功, 1: NACK (接收失败)
  */
 uint8_t SoftwareI2C_WaitACK(void);
+
+uint8_t SoftwareI2C_WaitACKNoStop(void);
 
 #endif //SOFTWAREI2C_H

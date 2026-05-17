@@ -1,103 +1,146 @@
-# STM32F407 SD 卡文件浏览与图片预览项目
+# STM32F407 SD 文件浏览与音乐播放项目
 
 ## 项目简介
 
-本项目基于 `STM32F407 + TFT LCD + SDIO + FATFS`，实现了一套可运行的嵌入式文件浏览与图片预览示例。当前工程已经具备：
+本工程基于普中麒麟 STM32F407 开发板，实现了一个以 SD 卡文件浏览为入口的综合示例程序。
 
-- `SD` 卡挂载与目录浏览
-- 普通文本文件查看
-- 字库从 `SD` 卡导入到外部 `W25Q128`
-- `BMP` 图片运行时预览
-- `JPG/JPEG` 图片运行时预览
-- 大图等比缩小、小图原尺寸居中显示
+当前主要功能：
 
-## 功能总览
+- SDIO + FATFS 挂载 SD 卡。
+- TFT LCD 文件浏览。
+- 文本/普通文件查看。
+- BMP/JPG 图片预览。
+- 外部 Flash 字库存储和中文显示。
+- WAV 音乐播放。
+- MP3 音乐播放。
+- 播放过程中按键调节音量。
 
-| 功能类别 | 当前实现 | 说明 |
-| --- | --- | --- |
-| 文件系统 | `FATFS + SDIO` | 从 `0:/` 根目录开始浏览 |
-| 页面体系 | `Main / List / View` | 主页面、文件列表页、文件查看页 |
-| 目录浏览 | 已支持 | 可进入任意子目录，支持 `[..]` 返回上一级 |
-| 文本查看 | 已支持 | 非图片文件按文本或十六进制摘要显示 |
-| 图片格式 | `BMP`、`JPG`、`JPEG` | 其余格式当前不支持运行时预览 |
-| 图片缩放 | 已支持 | 大图等比缩小，小图不放大，预览区居中 |
-| 中文显示 | 已支持 | 基于 `GB2312 + HZK16` 字库 |
-| 字库导入 | 已支持 | 从 `SD` 卡导入到外部 `W25Q128` |
+## 当前音乐播放状态
 
-## 页面与按键说明
+音频链路已经按阶段完成验证：
+
+1. WM8978 软件 IIC 控制验证。
+2. I2S2 + DMA 方波 tone 测试。
+3. WAV PCM 文件播放。
+4. MP3 文件读取和帧头探测。
+5. MP3 软件解码。
+6. MP3 I2S DMA 双缓冲播放。
+
+已验证现象：
+
+- WM8978 可以稳定 ACK，地址为 `0x1A`。
+- WAV 文件可以正常播放。
+- MP3 文件可以正常播放。
+- MP3 播放中的断续/快进问题已经修复。
+
+## 硬件配置
+
+| 模块 | 配置 |
+| --- | --- |
+| MCU | STM32F407 |
+| 显示 | TFT LCD 并口屏 |
+| 文件系统 | SDIO + FATFS |
+| 字库存储 | 外部 Flash |
+| 音频芯片 | WM8978 |
+| 音频输出 | I2S2 |
+| 音频 DMA | SPI2_TX / DMA1_Stream4 |
+
+音频相关引脚：
+
+| STM32 引脚 | 功能 |
+| --- | --- |
+| `PB12` | `I2S2_WS` |
+| `PB13` | `I2S2_CK` |
+| `PC3` | `I2S2_SD` |
+| `PC6` | `I2S2_MCK` |
+
+## 按键操作
 
 | 页面 | `KEY0` | `KEY1` | `KEY2` | `KEY_UP` |
 | --- | --- | --- | --- | --- |
-| 主页面 `Main` | 进入文件浏览器 | 切换主页面演示文字颜色 | 创建测试文件 | 重新导入字库 |
-| 列表页 `List` | 返回主页面 | 选中下一项 | 进入目录 / 打开文件 / 处理 `[..]` | 选中上一项 |
-| 查看页 `View` | 返回列表页 | 无 | 返回列表页 | 无 |
+| 主页面 | 进入文件浏览 | 切换文字颜色 | 创建测试文件 | 重新导入字体 |
+| 文件列表 | 返回主页面 | 选择下一项 | 进入目录/打开文件 | 选择上一项 |
+| 文件查看 | 返回列表 | 无 | 返回列表 | 无 |
+| WAV/MP3 播放中 | 停止当前播放 | 降低音量 | 暂停/继续 | 增加音量 |
 
-## 图片预览规则
+## 音乐播放使用方式
 
-| 项目 | 规则 |
-| --- | --- |
-| 预览入口 | 在列表页选中图片文件后按 `KEY2` |
-| 支持格式 | `.bmp`、`.jpg`、`.jpeg` |
-| 大图显示 | 按原图比例缩小到预览区域内 |
-| 小图显示 | 保持原尺寸，不放大 |
-| 对齐方式 | 在预览区域中居中显示 |
-| 背景处理 | 每次预览前先清空预览区域，避免残影 |
+1. 将音乐文件放到 SD 卡，例如 `0:/Music` 目录。
+2. 上电后等待 SD 卡和字体初始化完成。
+3. 按 `KEY0` 进入文件浏览。
+4. 选择 `Music` 目录并按 `KEY2` 进入。
+5. 选择 `.wav` 或 `.mp3` 文件并按 `KEY2` 播放。
+6. 播放过程中：
+   - `KEY0` 停止当前播放。
+   - `KEY1` 降低音量。
+   - `KEY2` 暂停/继续。
+   - `KEY_UP` 增加音量。
 
-## JPG 使用约束
+## 支持格式
 
-当前 `JPG/JPEG` 预览基于 `TJpgDec` 软件解码器，只保证常规 `Baseline JPEG` 稳定可用。
+### WAV
 
-| 项目 | 建议 |
-| --- | --- |
-| 推荐编码 | `Baseline JPEG` |
-| 推荐颜色模式 | `RGB / 常规照片导出` |
-| 推荐尺寸 | `320x240`、`240x320`、`240x240` |
-| 不推荐格式 | `Progressive JPEG`、`CMYK JPEG`、特殊采样方式 JPEG |
+当前支持：
 
-### 图片预览状态提示
+- PCM
+- 44.1kHz
+- 16bit
+- 双声道
 
-| 状态文本 | 含义 |
-| --- | --- |
-| `Image Preview: OK` | 图片已成功打开并显示 |
-| `Image Preview: JPG UNSUP` | JPEG 编码方式不在当前解码器支持范围内 |
-| `Image Preview: JPG NOMEM` | JPEG 解码工作区内存不足 |
-| `Image Preview: JPG FORMAT` | JPEG 文件结构损坏或头信息非法 |
-| `Image Preview: OPEN FAIL` | 文件打开失败 |
-| `Image Preview: READ ERR` | 文件读取失败 |
-| `Image Preview: RANGE ERR` | 预览区域参数非法 |
+不支持的 WAV 会在串口输出 `UNSUPPORTED` 或格式错误信息。
 
-## 核心模块说明
+### MP3
+
+当前主要验证：
+
+- Layer III MP3
+- 44.1kHz
+- 双声道
+
+MP3 使用 `minimp3` 软件解码，再通过 I2S2 DMA 输出到 WM8978。
+
+## 核心模块
 
 | 模块 | 路径 | 作用 |
 | --- | --- | --- |
-| `ui` | `Library/ui/` | 页面切换、按键分发、目录浏览、文件查看 |
-| `Picture` | `Library/Picture/` | `BMP/JPG` 解码与预览显示 |
-| `SD_RW` | `Library/SD_RW/` | `SD` 文件展示相关页面入口 |
-| `tftlcd` | `Library/tftlcd/` | LCD 底层驱动与基础绘图接口 |
-| `font_storage` | `Library/font_storage/` | 字库导入与外部 Flash 字模读取 |
-| `font_codec` | `Library/font_codec/` | `GB2312 / ASCII` 编码解析 |
+| UI | `Library/ui/` | 页面切换、目录浏览、文件打开 |
+| 音频播放 | `Library/audio/` | WAV/MP3 播放和音频测试 |
+| WM8978 | `Library/wm8978/` | 音频芯片寄存器配置 |
+| 软件 IIC | `Library/SoftwareI2C/` | WM8978 控制总线 |
+| LCD | `Library/tftlcd/` | 屏幕显示 |
+| 字库存储 | `Library/font_storage/` | 外部 Flash 字库管理 |
+| FATFS | `FATFS/`、`Middlewares/Third_Party/FatFs/` | SD 卡文件系统 |
 
-## 文档索引
+## 音频实现文档
 
-| 文档 | 路径 | 说明 |
-| --- | --- | --- |
-| 项目总览与操作手册 | [doc/PROJECT_GUIDE.md](/F:/CLion/Clion_Code/14_Picture/doc/PROJECT_GUIDE.md) | 表格化说明页面、按键、模块和测试建议 |
-| 项目最终交付说明 | [DELIVERY_NOTE.md](/F:/CLion/Clion_Code/14_Picture/DELIVERY_NOTE.md) | 汇总本阶段交付内容、资源规范、已知限制和结论 |
-| 图片模块说明 | [Library/Picture/README.md](/F:/CLion/Clion_Code/14_Picture/Library/Picture/README.md) | 图片预览能力、JPEG 约束、状态码说明 |
-| SD 卡图片显示说明 | [Library/Picture/SD_CARD_LCD_IMAGE_DISPLAY.md](/F:/CLion/Clion_Code/14_Picture/Library/Picture/SD_CARD_LCD_IMAGE_DISPLAY.md) | 从 SD 卡读取图片到 LCD 的原理与工程说明 |
+| 文档 | 说明 |
+| --- | --- |
+| [Library/audio/README.md](Library/audio/README.md) | WAV/MP3 播放模块、调用链和实现思路 |
+| [Library/wm8978/README.md](Library/wm8978/README.md) | WM8978 初始化、寄存器写入和播放路径 |
+| [docs/superpowers/plans/2026-05-07-mp3-module-verification.md](docs/superpowers/plans/2026-05-07-mp3-module-verification.md) | MP3/WAV 验证过程和阶段记录 |
 
-## 构建方式
+## 构建说明
+
+本工程使用 CLion + STM32CubeCLT/CMake 构建。
+
+常用命令：
 
 ```bash
 cmake --preset Debug
-cmake --build --preset Debug
+cmake --build --target 1_LED --preset Debug
 ```
 
-## 硬件依赖
+当前开发约定：
 
-| 类别 | 说明 |
-| --- | --- |
-| MCU | `STM32F407` |
-| 显示 | TFT LCD 并口屏 |
-| 存储 | `SD` 卡 + 外部 `W25Q128` |
-| 输入 | `KEY0 / KEY1 / KEY2 / KEY_UP` |
+- 由开发者在 CLion 中编译和烧录。
+- 代码生成仍由 CubeMX 负责。
+- 用户代码应尽量放在 `USER CODE` 区域，避免重新生成代码时丢失。
+
+## 当前限制和后续计划
+
+当前未完成的计划项主要是播放器控制完善：
+
+- 上一首/下一首。
+- LCD 显示当前播放状态、文件名和音量。
+- 支持更多采样率的 WAV/MP3。
+- 将测试型 `mp3_decode_test` 重构为正式 `mp3_player` 模块。

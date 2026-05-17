@@ -2,65 +2,34 @@
 #define TFTLCD_H
 
 #include "main.h"
+#include "tftlcd_port.h"
 #include <stdint.h>
 
-/*
- * LCD 驱动型号选择：
- * 根据实际屏幕控制器型号启用对应宏。
- * 当前工程默认使用 `HX8357DN`。
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+/**
+ * @brief 当前 LCD 控制器类型标记
+ * @note
+ * 当前阶段仅整理 HX8357DN 底层驱动，不引入多控制器切换框架。
+ * 保留该宏是为了兼容旧工程中可能存在的条件编译判断。
  */
-//#define TFTLCD_HX8357D
-//#define TFTLCD_HX8352C
-//#define TFTLCD_ILI9341
-//#define TFTLCD_ILI9327
-//#define TFTLCD_ILI9486
-//#define TFTLCD_R61509V
-//#define TFTLCD_R61509VN
-//#define TFTLCD_R61509V3
-//#define TFTLCD_ST7793
-//#define TFTLCD_NT35510
 #define TFTLCD_HX8357DN
-//#define TFTLCD_ILI9325
-//#define TFTLCD_SSD1963
-//#define TFTLCD_ILI9481
-//#define TFTLCD_R61509VE
-//#define TFTLCD_SSD1963N
-//#define TFTLCD_ILI9488
-//#define TFTLCD_ILI9806
-
-/** 屏幕方向：0=竖屏，1=横屏。 */
-#define TFTLCD_DIR 0
-
-/** LCD 背光控制引脚。 */
-#define LCD_LED PBout(15)
 
 typedef uint8_t u8;
 typedef uint16_t u16;
 typedef uint32_t u32;
 
 /**
- * @brief LCD FSMC 映射地址结构
+ * @brief LCD 运行时参数
  * @details
- * `LCD_CMD` 用于写命令寄存器，
- * `LCD_DATA` 用于写数据寄存器。
+ * 该结构体用于保存 LCD 当前的动态信息：
+ * - `width` / `height`：当前显示方向下的逻辑分辨率
+ * - `id`：LCD 控制器 ID
+ * - `dir`：显示方向，`0` 表示竖屏，`1` 表示横屏
  */
-typedef struct
-{
-    u16 LCD_CMD;
-    u16 LCD_DATA;
-} TFTLCD_TypeDef;
-
-/*
- * FSMC/NOR-SRAM 地址映射说明：
- * 使用 Bank1 Sector4，A6 区分命令与数据区。
- */
-#define TFTLCD_BASE ((u32)(0x6C000000 | 0x0000007E))
-#define TFTLCD ((TFTLCD_TypeDef *)TFTLCD_BASE)
-
-/**
- * @brief LCD 运行时关键参数
- */
-typedef struct
+typedef struct _tftlcd_data
 {
     u16 width;
     u16 height;
@@ -68,14 +37,10 @@ typedef struct
     u8 dir;
 } _tftlcd_data;
 
-/** 全局 LCD 参数对象。 */
 extern _tftlcd_data tftlcd_data;
-/** 当前前景色。 */
 extern u16 FRONT_COLOR;
-/** 当前背景色。 */
 extern u16 BACK_COLOR;
 
-/* 常用颜色定义，采用 RGB565 格式。 */
 #define WHITE 0xFFFF
 #define BLACK 0x0000
 #define BLUE 0x001F
@@ -99,93 +64,197 @@ extern u16 BACK_COLOR;
 #define LGRAYBLUE 0xA651
 #define LBBLUE 0x2B12
 
-#ifdef TFTLCD_SSD1963
-/* 以下参数仅在 SSD1963 RGB 屏配置下使用。 */
-#define SSD_HOR_RESOLUTION 800
-#define SSD_VER_RESOLUTION 480
-#define SSD_HOR_PULSE_WIDTH 1
-#define SSD_HOR_BACK_PORCH 210
-#define SSD_HOR_FRONT_PORCH 45
-#define SSD_VER_PULSE_WIDTH 1
-#define SSD_VER_BACK_PORCH 34
-#define SSD_VER_FRONT_PORCH 10
-#define SSD_HT (SSD_HOR_RESOLUTION + SSD_HOR_PULSE_WIDTH + SSD_HOR_BACK_PORCH + SSD_HOR_FRONT_PORCH)
-#define SSD_HPS (SSD_HOR_PULSE_WIDTH + SSD_HOR_BACK_PORCH)
-#define SSD_VT (SSD_VER_PULSE_WIDTH + SSD_VER_BACK_PORCH + SSD_VER_FRONT_PORCH + SSD_VER_RESOLUTION)
-#define SSD_VSP (SSD_VER_PULSE_WIDTH + SSD_VER_BACK_PORCH)
-#endif
-
-#ifdef TFTLCD_SSD1963N
-/* 以下参数仅在 4.3 寸 SSD1963N RGB 屏配置下使用。 */
-#define SSD_HOR_RESOLUTION 480
-#define SSD_VER_RESOLUTION 272
-#define SSD_HT 525
-#define SSD_HPS 43
-#define SSD_LPS 1
-#define SSD_HPW 42
-#define SSD_VDP 271
-#define SSD_VT 288
-#define SSD_VPS 12
-#define SSD_FPS 1
-#define SSD_VPW 11
-#endif
-
-/** 向 LCD 写命令。 */
 void LCD_WriteCmd(u16 cmd);
-/** 向 LCD 写数据。 */
 void LCD_WriteData(u16 data);
-/** 同时写命令和数据。 */
 void LCD_WriteCmdData(u16 cmd, u16 data);
-/** 连续写颜色数据。 */
 void LCD_WriteData_Color(u16 color);
 
-/** 初始化 LCD 控制器和显示参数。 */
+/**
+ * @brief 初始化 LCD
+ * @details
+ * 调用流程：
+ * 1. 端口层执行硬件复位并打开背光；
+ * 2. 控制器层完成 HX8357DN 寄存器初始化；
+ * 3. 设置默认显示方向；
+ * 4. 清屏为白色。
+ *
+ * 使用前需要确保：
+ * - `MX_GPIO_Init()` 已执行；
+ * - `MX_FSMC_Init()` 已执行。
+ */
 void TFTLCD_Init(void);
-/** 设置显存写入窗口。 */
+
+/**
+ * @brief 设置 LCD 写窗口
+ * @param sx 起始 X 坐标
+ * @param sy 起始 Y 坐标
+ * @param width 结束 X 坐标
+ * @param height 结束 Y 坐标
+ * @note
+ * 历史接口的参数名仍保留 `width/height`，但实际语义是结束坐标 `ex/ey`。
+ * 为兼容现有上层调用，本次重构不修改函数签名。
+ */
 void LCD_Set_Window(u16 sx, u16 sy, u16 width, u16 height);
-/** 设置屏幕显示方向。 */
+
+/**
+ * @brief 设置 LCD 显示方向
+ * @param dir `0` 竖屏，`1` 横屏
+ */
 void LCD_Display_Dir(u8 dir);
-/** 全屏清屏。 */
+
+/**
+ * @brief 全屏清屏
+ * @param Color 填充颜色，RGB565
+ */
 void LCD_Clear(u16 Color);
-/** 清除指定矩形区域。 */
+
+/**
+ * @brief 清除指定矩形区域
+ * @param x0 左上角 X 坐标
+ * @param y0 左上角 Y 坐标
+ * @param x1 右下角 X 坐标
+ * @param y1 右下角 Y 坐标
+ * @note 当前实现使用白色填充该区域。
+ */
 void LCD_ClearArea(uint16_t x0, uint16_t y0, uint16_t x1, uint16_t y1);
-/** 用单色填充指定矩形区域。 */
+
+/**
+ * @brief 用单色填充矩形区域
+ * @param xState 起始 X 坐标
+ * @param yState 起始 Y 坐标
+ * @param xEnd 结束 X 坐标
+ * @param yEnd 结束 Y 坐标
+ * @param color 填充颜色，RGB565
+ */
 void LCD_Fill(u16 xState, u16 yState, u16 xEnd, u16 yEnd, u16 color);
-/** 用颜色数组填充指定区域。 */
+
+/**
+ * @brief 用颜色数组填充矩形区域
+ * @param sx 起始 X 坐标
+ * @param sy 起始 Y 坐标
+ * @param ex 结束 X 坐标
+ * @param ey 结束 Y 坐标
+ * @param color 颜色数组指针
+ */
 void LCD_Color_Fill(u16 sx, u16 sy, u16 ex, u16 ey, u16 *color);
-/** 按当前前景色绘制单个像素。 */
+
+/**
+ * @brief 使用当前前景色绘制像素点
+ * @param x 像素点 X 坐标
+ * @param y 像素点 Y 坐标
+ */
 void LCD_DrawPoint(u16 x, u16 y);
-/** 以指定颜色绘制单个像素。 */
+
+/**
+ * @brief 使用指定颜色绘制像素点
+ * @param x 像素点 X 坐标
+ * @param y 像素点 Y 坐标
+ * @param color 像素点颜色，RGB565
+ */
 void LCD_DrawFRONT_COLOR(u16 x, u16 y, u16 color);
-/** 读取指定像素颜色。 */
+
+/**
+ * @brief 读取指定像素点颜色
+ * @param x 像素点 X 坐标
+ * @param y 像素点 Y 坐标
+ * @retval RGB565 颜色值，越界时返回 0
+ */
 u16 LCD_ReadPoint(u16 x, u16 y);
-/** 绘制直线。 */
+
+/**
+ * @brief 使用当前前景色绘制直线
+ * @param x1 起点 X 坐标
+ * @param y1 起点 Y 坐标
+ * @param x2 终点 X 坐标
+ * @param y2 终点 Y 坐标
+ */
 void LCD_DrawLine(u16 x1, u16 y1, u16 x2, u16 y2);
-/** 以指定颜色绘制直线。 */
+
+/**
+ * @brief 使用指定颜色绘制直线
+ * @param x1 起点 X 坐标
+ * @param y1 起点 Y 坐标
+ * @param x2 终点 X 坐标
+ * @param y2 终点 Y 坐标
+ * @param color 直线颜色，RGB565
+ */
 void LCD_DrawLine_Color(u16 x1, u16 y1, u16 x2, u16 y2, u16 color);
-/** 绘制十字标记。 */
+
+/**
+ * @brief 绘制十字标记
+ * @param x 标记中心 X 坐标
+ * @param y 标记中心 Y 坐标
+ * @param color 标记颜色，RGB565
+ */
 void LCD_DrowSign(uint16_t x, uint16_t y, uint16_t color);
-/** 绘制矩形框。 */
+
+/**
+ * @brief 使用当前前景色绘制空心矩形
+ * @param x1 第一个对角点 X 坐标
+ * @param y1 第一个对角点 Y 坐标
+ * @param x2 第二个对角点 X 坐标
+ * @param y2 第二个对角点 Y 坐标
+ */
 void LCD_DrawRectangle(u16 x1, u16 y1, u16 x2, u16 y2);
-/** 绘制圆。 */
+
+/**
+ * @brief 使用当前前景色绘制空心圆
+ * @param x0 圆心 X 坐标
+ * @param y0 圆心 Y 坐标
+ * @param r 圆半径
+ */
 void LCD_Draw_Circle(u16 x0, u16 y0, u8 r);
-/** 显示单个 ASCII 字符。 */
+
+/**
+ * @brief 显示单个 ASCII 字符
+ * @param x 字符左上角 X 坐标
+ * @param y 字符左上角 Y 坐标
+ * @param num 要显示的字符，范围为 `' '` 到 `'~'`
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param mode 显示模式，`0` 为非叠加，`1` 为叠加
+ */
 void LCD_ShowChar(u16 x, u16 y, u8 num, u8 size, u8 mode);
-/** 显示十进制整数。 */
+
+/**
+ * @brief 显示十进制无符号整数，高位 0 不显示
+ * @param x 数字左上角起始 X 坐标
+ * @param y 数字左上角起始 Y 坐标
+ * @param num 要显示的数值
+ * @param len 总显示位数
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ */
 void LCD_ShowNum(u16 x, u16 y, u32 num, u8 len, u8 size);
-/** 按指定模式显示整数。 */
+
+/**
+ * @brief 显示十进制无符号整数，可配置前导位填充方式
+ * @param x 数字左上角起始 X 坐标
+ * @param y 数字左上角起始 Y 坐标
+ * @param num 要显示的数值
+ * @param len 总显示位数
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param mode `bit7` 控制前导 0 填充，`bit0` 控制叠加显示
+ */
 void LCD_ShowxNum(u16 x, u16 y, u32 num, u8 len, u8 size, u8 mode);
-/** 显示字符串。 */
+
+/**
+ * @brief 在指定区域内显示 ASCII 字符串
+ * @param x 显示区域左上角 X 坐标
+ * @param y 显示区域左上角 Y 坐标
+ * @param width 显示区域宽度
+ * @param height 显示区域高度
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param p 字符串首地址
+ */
 void LCD_ShowString(u16 x, u16 y, u16 width, u16 height, u8 size, u8 *p);
-/** 混合显示 ASCII 与中文文本。 */
 void LCD_ShowTextMixed(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const uint8_t *text);
-/** 绘制单个中文字符。 */
+void LCD_ShowTextUtf8(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const char *utf8);
 void LCD_DrawOneChinese(uint16_t x, uint16_t y, const char *hz);
-/** 显示中文字符串。 */
 void LCD_ShowChinese(uint16_t x, uint16_t y, const char *hz);
-/** 根据字模显示汉字。 */
 void LCD_ShowFontHZ(u16 x, u16 y, u8 *cn);
-/** 显示位图图片。 */
 void LCD_ShowPicture(u16 x, u16 y, u16 wide, u16 high, u8 *pic);
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif

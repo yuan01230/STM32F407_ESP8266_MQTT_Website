@@ -57,7 +57,7 @@ u8 mpu_dmp_init(void)
     if (mpu_configure_fifo(INV_XYZ_GYRO | INV_XYZ_ACCEL) != 0) return 3;
 
     // 4. 设置采样率 (默认 100Hz)
-    if (mpu_set_sample_rate(100) != 0) return 4;
+    if (mpu_set_sample_rate(20) != 0) return 4;
 
     // 5. 加载 DMP 固件
     if (dmp_load_motion_driver_firmware() != 0) return 5;
@@ -71,7 +71,7 @@ u8 mpu_dmp_init(void)
                            DMP_FEATURE_SEND_CAL_GYRO | DMP_FEATURE_GYRO_CAL) != 0) return 7;
 
     // 8. 设置 FIFO 刷新率
-    if (dmp_set_fifo_rate(100) != 0) return 8;
+    if (dmp_set_fifo_rate(20) != 0) return 8;
 
     // 9. 启动 DMP
     if (mpu_set_dmp_state(1) != 0) return 9;

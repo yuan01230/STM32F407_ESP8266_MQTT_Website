@@ -55,8 +55,6 @@
 /* USER CODE END 0 */
 
 /* External variables --------------------------------------------------------*/
-extern DMA_HandleTypeDef hdma_spi2_tx;
-extern RTC_HandleTypeDef hrtc;
 extern DMA_HandleTypeDef hdma_sdio_rx;
 extern DMA_HandleTypeDef hdma_sdio_tx;
 extern SD_HandleTypeDef hsd;
@@ -204,48 +202,6 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
-  * @brief This function handles RTC tamper and timestamp interrupts through EXTI line 21.
-  */
-void TAMP_STAMP_IRQHandler(void)
-{
-  /* USER CODE BEGIN TAMP_STAMP_IRQn 0 */
-
-  /* USER CODE END TAMP_STAMP_IRQn 0 */
-  HAL_RTCEx_TamperTimeStampIRQHandler(&hrtc);
-  /* USER CODE BEGIN TAMP_STAMP_IRQn 1 */
-
-  /* USER CODE END TAMP_STAMP_IRQn 1 */
-}
-
-/**
-  * @brief This function handles RTC wake-up interrupt through EXTI line 22.
-  */
-void RTC_WKUP_IRQHandler(void)
-{
-  /* USER CODE BEGIN RTC_WKUP_IRQn 0 */
-
-  /* USER CODE END RTC_WKUP_IRQn 0 */
-  HAL_RTCEx_WakeUpTimerIRQHandler(&hrtc);
-  /* USER CODE BEGIN RTC_WKUP_IRQn 1 */
-
-  /* USER CODE END RTC_WKUP_IRQn 1 */
-}
-
-/**
-  * @brief This function handles DMA1 stream4 global interrupt.
-  */
-void DMA1_Stream4_IRQHandler(void)
-{
-  /* USER CODE BEGIN DMA1_Stream4_IRQn 0 */
-
-  /* USER CODE END DMA1_Stream4_IRQn 0 */
-  HAL_DMA_IRQHandler(&hdma_spi2_tx);
-  /* USER CODE BEGIN DMA1_Stream4_IRQn 1 */
-
-  /* USER CODE END DMA1_Stream4_IRQn 1 */
-}
-
-/**
   * @brief This function handles USART1 global interrupt.
   */
 void USART1_IRQHandler(void)
@@ -257,20 +213,6 @@ void USART1_IRQHandler(void)
   /* USER CODE BEGIN USART1_IRQn 1 */
 
   /* USER CODE END USART1_IRQn 1 */
-}
-
-/**
-  * @brief This function handles RTC alarms A and B interrupt through EXTI line 17.
-  */
-void RTC_Alarm_IRQHandler(void)
-{
-  /* USER CODE BEGIN RTC_Alarm_IRQn 0 */
-
-  /* USER CODE END RTC_Alarm_IRQn 0 */
-  HAL_RTC_AlarmIRQHandler(&hrtc);
-  /* USER CODE BEGIN RTC_Alarm_IRQn 1 */
-
-  /* USER CODE END RTC_Alarm_IRQn 1 */
 }
 
 /**

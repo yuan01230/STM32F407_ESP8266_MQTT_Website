@@ -35,6 +35,27 @@ static void I2C_Delay(void)
 }
 
 // 写 SCL 电平
+static void I2C_SDA_OUT(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin = I2C_SDA_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
+    HAL_GPIO_Init(I2C_SDA_PORT, &GPIO_InitStruct);
+}
+
+static void I2C_SDA_IN(void)
+{
+    GPIO_InitTypeDef GPIO_InitStruct = {0};
+
+    GPIO_InitStruct.Pin = I2C_SDA_PIN;
+    GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+    GPIO_InitStruct.Pull = GPIO_PULLUP;
+    HAL_GPIO_Init(I2C_SDA_PORT, &GPIO_InitStruct);
+}
+
 #define I2C_W_SCL(x)    HAL_GPIO_WritePin(I2C_SCL_PORT, I2C_SCL_PIN, (x) ? GPIO_PIN_SET : GPIO_PIN_RESET)
 // 写 SDA 电平
 #define I2C_W_SDA(x)    HAL_GPIO_WritePin(I2C_SDA_PORT, I2C_SDA_PIN, (x) ? GPIO_PIN_SET : GPIO_PIN_RESET)
@@ -47,8 +68,7 @@ static void I2C_Delay(void)
 
 /**
  * @brief 初始化软件 I2C 引脚
- * @note  配置 SCL 和 SDA 为开漏输出 (Open-Drain)，上拉 (Pull-Up)。
- *        这样在读取数据时，只需将 SDA 输出高电平，即可读取外部电平。
+ * @note  配置 SCL 和 SDA 为推挽输出，上拉。读取 ACK/数据前会临时切换 SDA 为输入。
  */
 void SoftwareI2C_Init(void)
 {
@@ -60,10 +80,10 @@ void SoftwareI2C_Init(void)
     if (I2C_SCL_PORT == GPIOC || I2C_SDA_PORT == GPIOC) __HAL_RCC_GPIOC_CLK_ENABLE();
     // ... 其他端口请自行添加
 
-    // 通用配置：开漏输出，上拉，高速
-    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_OD; // 开漏输出
+    // 通用配置：推挽输出，上拉，高速；与官方示例保持一致。
+    GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
     GPIO_InitStruct.Pull = GPIO_PULLUP;         // 上拉 (如果外部有上拉电阻，这里也可以设为 NOPULL)
-    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+    GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_VERY_HIGH;
 
     // 配置 SCL
     GPIO_InitStruct.Pin = I2C_SCL_PIN;
@@ -84,6 +104,7 @@ void SoftwareI2C_Init(void)
  */
 void SoftwareI2C_Start(void)
 {
+    I2C_SDA_OUT();
     I2C_W_SDA(1);
     I2C_W_SCL(1);
     I2C_Delay();
@@ -98,6 +119,7 @@ void SoftwareI2C_Start(void)
  */
 void SoftwareI2C_Stop(void)
 {
+    I2C_SDA_OUT();
     I2C_W_SDA(0);
     I2C_W_SCL(1);
     I2C_Delay();
@@ -111,6 +133,7 @@ void SoftwareI2C_Stop(void)
  */
 void SoftwareI2C_SendByte(uint8_t byte)
 {
+    I2C_SDA_OUT();
     for (uint8_t i = 0; i < 8; i++)
     {
         // 先准备数据
@@ -132,6 +155,8 @@ void SoftwareI2C_SendByte(uint8_t byte)
 uint8_t SoftwareI2C_ReceiveByte(void)
 {
     uint8_t byte = 0;
+
+    I2C_SDA_IN();
 
     // 主机释放 SDA 线，准备读取
     I2C_W_SDA(1);
@@ -161,6 +186,7 @@ uint8_t SoftwareI2C_ReceiveByte(void)
  */
 void SoftwareI2C_SendACK(uint8_t ack)
 {
+    I2C_SDA_OUT();
     I2C_W_SDA(ack);
     I2C_Delay();
     I2C_W_SCL(1);
@@ -173,28 +199,52 @@ void SoftwareI2C_SendACK(uint8_t ack)
  * @brief 等待从机 ACK
  * @return 0: ACK 接收成功, 1: NACK (接收失败)
  */
-uint8_t SoftwareI2C_WaitACK(void)
+static uint8_t SoftwareI2C_WaitACKInternal(uint8_t stop_on_nack)
 {
     uint8_t ack;
+    uint16_t timeout = 0U;
 
     // 主机释放 SDA，等待从机拉低
+    I2C_SDA_IN();
+    I2C_W_SCL(0);
+    I2C_SDA_OUT();
     I2C_W_SDA(1);
+    I2C_Delay();
+    I2C_SDA_IN();
     I2C_Delay();
     I2C_W_SCL(1);
     I2C_Delay();
 
-    if (I2C_R_SDA())
+    while (I2C_R_SDA())
     {
-        ack = 1; // NACK
-        SoftwareI2C_Stop(); // 如果没有应答，通常发送停止信号
-    }
-    else
-    {
-        ack = 0; // ACK
+        timeout++;
+        if (timeout > 1000U)
+        {
+            ack = 1U;
+            if (stop_on_nack != 0U)
+            {
+                SoftwareI2C_Stop();
+            }
+            I2C_W_SCL(0);
+            I2C_Delay();
+            return ack;
+        }
+        I2C_Delay();
     }
 
+    ack = 0U;
     I2C_W_SCL(0);
     I2C_Delay();
 
     return ack;
+}
+
+uint8_t SoftwareI2C_WaitACK(void)
+{
+    return SoftwareI2C_WaitACKInternal(1U);
+}
+
+uint8_t SoftwareI2C_WaitACKNoStop(void)
+{
+    return SoftwareI2C_WaitACKInternal(0U);
 }

@@ -20,11 +20,11 @@
  */
 
 #include "tftlcd.h"
-
-#include "tftlcd.h"
+#include "tftlcd_hx8357dn.h"
 #include "stdlib.h"
 #include "font.h"
 #include "string.h"
+#include "ff.h"
 #include "../font_storage/font_storage.h"
 #include "../font_codec/font_codec.h"
 
@@ -33,163 +33,226 @@ u16 FRONT_COLOR=BLACK;	//鐢荤瑪棰滆壊
 u16 BACK_COLOR=WHITE;  //鑳屾櫙鑹?
 _tftlcd_data tftlcd_data;
 
+/**
+ * @brief 判断指定坐标是否位于当前 LCD 逻辑显示区域内
+ * @param x 像素点 X 坐标
+ * @param y 像素点 Y 坐标
+ * @retval 1 坐标有效
+ * @retval 0 坐标越界
+ */
+static uint8_t LCD_IsPointValid(u16 x, u16 y)
+{
+    if ((x >= tftlcd_data.width) || (y >= tftlcd_data.height))
+    {
+        return 0U;
+    }
 
-//鍐欏瘎瀛樺櫒鍑芥暟
-//cmd:瀵勫瓨鍣ㄥ€?void LCD_WriteCmd(u16 cmd)
+    return 1U;
+}
+
+/**
+ * @brief 对矩形区域参数进行排序与裁剪
+ * @param x0 左上角 X 坐标指针
+ * @param y0 左上角 Y 坐标指针
+ * @param x1 右下角 X 坐标指针
+ * @param y1 右下角 Y 坐标指针
+ * @retval 1 区域有效，可继续绘制
+ * @retval 0 区域无效，无需绘制
+ * @details
+ * 该辅助函数统一处理起止坐标传反、坐标越界和空区域问题，
+ * 便于基础绘图函数复用同一套边界保护逻辑。
+ */
+static uint8_t LCD_NormalizeRect(u16 *x0, u16 *y0, u16 *x1, u16 *y1)
+{
+    u16 temp;
+
+    if (*x0 > *x1)
+    {
+        temp = *x0;
+        *x0 = *x1;
+        *x1 = temp;
+    }
+
+    if (*y0 > *y1)
+    {
+        temp = *y0;
+        *y0 = *y1;
+        *y1 = temp;
+    }
+
+    if ((*x0 >= tftlcd_data.width) || (*y0 >= tftlcd_data.height))
+    {
+        return 0U;
+    }
+
+    if (*x1 >= tftlcd_data.width)
+    {
+        *x1 = (u16)(tftlcd_data.width - 1U);
+    }
+
+    if (*y1 >= tftlcd_data.height)
+    {
+        *y1 = (u16)(tftlcd_data.height - 1U);
+    }
+
+    return 1U;
+}
+
+/**
+ * @brief 向已经设置好的矩形窗口连续写入同一种颜色
+ * @param width 窗口宽度，单位：像素
+ * @param height 窗口高度，单位：像素
+ * @param color 要写入的 RGB565 颜色
+ */
+static void LCD_WriteSolidColor(uint16_t width, uint16_t height, u16 color)
+{
+    uint32_t pixel_count;
+
+    pixel_count = (uint32_t)width * (uint32_t)height;
+    while (pixel_count > 0U)
+    {
+        LCD_WriteData_Color(color);
+        pixel_count--;
+    }
+}
+
+/**
+ * @brief 获取 ASCII 字符宽度
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @retval 字符宽度，单位：像素
+ * @retval 0 不支持的字体尺寸
+ * @details
+ * 当前工程中的 ASCII 字模采用“半宽字符”组织方式，
+ * 因此字符宽度恒等于 `size / 2`。
+ */
+static uint8_t LCD_GetAsciiCharWidth(u8 size)
+{
+    if ((size != 12U) && (size != 16U) && (size != 24U))
+    {
+        return 0U;
+    }
+
+    return (uint8_t)(size / 2U);
+}
+
+/**
+ * @brief 获取 ASCII 字模数据指针
+ * @param ch 要显示的 ASCII 字符
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param glyph_bytes 输出参数，返回单个字符占用的字节数
+ * @retval 成功时返回字模首地址
+ * @retval 失败时返回 `NULL`
+ * @details
+ * 当前字库从空格 `' '` 开始连续存放到 `~`，因此访问前需要先做
+ * 可显示 ASCII 范围判断，再通过偏移量取得对应字模。
+ */
+static const uint8_t *LCD_GetAsciiGlyph(u8 ch, u8 size, u8 *glyph_bytes)
+{
+    uint8_t index;
+
+    if (glyph_bytes == NULL)
+    {
+        return NULL;
+    }
+
+    if ((ch < (u8)' ') || (ch > (u8)'~'))
+    {
+        return NULL;
+    }
+
+    index = (uint8_t)(ch - (u8)' ');
+    if (size == 12U)
+    {
+        *glyph_bytes = 12U;
+        return ascii_1206[index];
+    }
+    if (size == 16U)
+    {
+        *glyph_bytes = 16U;
+        return ascii_1608[index];
+    }
+    if (size == 24U)
+    {
+        *glyph_bytes = 36U;
+        return ascii_2412[index];
+    }
+
+    return NULL;
+}
+
+/**
+ * @brief 向 LCD 写入命令
+ * @details
+ * 对业务层暴露稳定 API，内部具体访问细节已经下沉到
+ * `tftlcd_hx8357dn.c` 控制器层，便于后续维护。
+ */
 void LCD_WriteCmd(u16 cmd)
 {
-
-
-#ifdef TFTLCD_HX8357DN
-	TFTLCD->LCD_CMD=cmd;
-#endif
-
-
+    HX8357DN_WriteCmd(cmd);
 }
 
-//鍐欐暟鎹?//data:瑕佸啓鍏ョ殑鍊?void LCD_WriteData(u16 data)
+/**
+ * @brief 向 LCD 写入数据
+ */
 void LCD_WriteData(u16 data)
 {
-
-#ifdef TFTLCD_HX8357DN
-	TFTLCD->LCD_DATA=data;
-#endif
-
-
+    HX8357DN_WriteData(data);
 }
 
+/**
+ * @brief 连续写入一个命令和对应数据
+ */
 void LCD_WriteCmdData(u16 cmd,u16 data)
 {
 	LCD_WriteCmd(cmd);
 	LCD_WriteData(data);
 }
 
-
-u32 LCD_RGBColor_Change(u16 color)
-{
-	u8 r,g,b=0;
-
-	r=(color>>11)&0x1f;
-	g=(color>>5)&0x3f;
-	b=color&0x1f;
-
-	return ((r<<13)|(g<<6)|(b<<1));
-}
+/**
+ * @brief 向当前 GRAM 窗口写入一个 RGB565 像素
+ * @details
+ * 上层绘图函数只关心“写入一个像素颜色”，不需要关心底层总线
+ * 是直接写 16 位还是拆分成高低字节，这些差异由控制器层统一处理。
+ */
 void LCD_WriteData_Color(u16 color)
 {
-
-#ifdef TFTLCD_HX8357DN
-	TFTLCD->LCD_DATA=color>>8;
-	TFTLCD->LCD_DATA=color&0xff;
-#endif
-
+    HX8357DN_WriteColor(color);
 }
 
-//璇绘暟鎹?//杩斿洖鍊?璇诲埌鐨勫€?u16 LCD_ReadData(void)
-u16 LCD_ReadData(void)
-{
-
-
-#ifdef TFTLCD_HX8357DN
-//	u16 ram1,ram2;
-//	ram1=TFTLCD->LCD_DATA;
-//	printf("ram1=%x   ",ram1);
-//	ram2=TFTLCD->LCD_DATA;
-//	printf("ram2=%x   \r\n",ram2);
-//	ram2=ram2<<8|ram1;
-//	return ram2;
-	return TFTLCD->LCD_DATA;
-//	return ((TFTLCD->LCD_DATA<<8)|(TFTLCD->LCD_DATA));
-#endif
-
-}
-
-
-//璁剧疆LCD鏄剧ず鏂瑰悜
-//dir:0,绔栧睆锛?,妯睆
+/**
+ * @brief 设置 LCD 显示方向
+ * @param dir `0` 竖屏，`1` 横屏
+ * @details
+ * 除了更新控制器寄存器外，还会同步更新 `tftlcd_data.width/height`，
+ * 这样上层绘图函数始终基于当前方向下的逻辑分辨率工作。
+ */
 void LCD_Display_Dir(u8 dir)
 {
-	tftlcd_data.dir=dir;         //妯睆/绔栧睆
-	if(dir==0)  //榛樿绔栧睆鏂瑰悜
-	{
-
-
-#ifdef TFTLCD_HX8357DN
-		LCD_WriteCmd(0x36);   //璁剧疆褰╁睆鏄剧ず鏂瑰悜鐨勫瘎瀛樺櫒
-		LCD_WriteData(0x4c);
-		tftlcd_data.height=480;
-		tftlcd_data.width=320;
-#endif
-
-	}
-	else
-	{
-
-#ifdef TFTLCD_HX8357DN
-		LCD_WriteCmd(0x36);
-		LCD_WriteData(0x2c);
-		tftlcd_data.height=320;
-		tftlcd_data.width=480;
-#endif
-
-
-	}
+    HX8357DN_SetDisplayDir(&tftlcd_data, dir);
 }
 
-
-//璁剧疆绐楀彛,骞惰嚜鍔ㄨ缃敾鐐瑰潗鏍囧埌绐楀彛宸︿笂瑙?sx,sy).
-//sx,sy:绐楀彛璧峰鍧愭爣(宸︿笂瑙?
-//width,height:绐楀彛瀹藉害鍜岄珮搴?蹇呴』澶т簬0!!
-//绐椾綋澶у皬:width*height.
+/**
+ * @brief 设置 LCD 显示窗口
+ * @param sx 起始 X 坐标
+ * @param sy 起始 Y 坐标
+ * @param width 结束 X 坐标
+ * @param height 结束 Y 坐标
+ * @note
+ * 历史接口的参数名仍保留 `width/height`，但实际语义是结束坐标 `ex/ey`。
+ * 当前阶段为了兼容现有工程调用点，不调整接口名称与参数名。
+ */
 void LCD_Set_Window(u16 sx,u16 sy,u16 width,u16 height)
 {
-
-#ifdef TFTLCD_HX8357DN
-	LCD_WriteCmd(0x2A);
-    LCD_WriteData(sx>>8);
-    LCD_WriteData(sx&0XFF);
-    LCD_WriteData(width>>8);
-    LCD_WriteData(width&0XFF);
-
-    LCD_WriteCmd(0x2b);
-    LCD_WriteData(sy>>8);
-    LCD_WriteData(sy&0XFF);
-    LCD_WriteData(height>>8);
-    LCD_WriteData(height&0XFF);
-    LCD_WriteCmd(0x2c);
-#endif
-
+    HX8357DN_SetWindow(sx, sy, width, height);
 }
 
-//璇诲彇涓煇鐐圭殑棰滆壊鍊?//x,y:鍧愭爣
-//杩斿洖鍊?姝ょ偣鐨勯鑹?u16 LCD_ReadPoint(u16 x,u16 y)
+/**
+ * @brief 读取指定像素点的颜色值
+ */
 u16 LCD_ReadPoint(u16 x,u16 y)
 {
- 	u16 r=0,g=0;
-
-	if(x>=tftlcd_data.width||y>=tftlcd_data.height)return 0;	//瓒呰繃浜嗚寖鍥?鐩存帴杩斿洖
-	LCD_Set_Window(x, y, x, y);
-
-#ifdef TFTLCD_HX8357D
-	LCD_WriteCmd(0X2E);
- 	r=LCD_ReadData();								//dummy Read
- 	r=LCD_ReadData();  		  						//瀹為檯鍧愭爣棰滆壊
-#endif
-
-#ifdef TFTLCD_HX8357DN
-//	LCD_WriteCmd(0X2E);
-//	r=TFTLCD->LCD_DATA;
-//	r=TFTLCD->LCD_DATA<<8;
-//	r|=TFTLCD->LCD_DATA;
-	LCD_WriteCmd(0X2E);
-	r=TFTLCD->LCD_DATA;
-	r=TFTLCD->LCD_DATA;
-	g=TFTLCD->LCD_DATA;
-	(void)TFTLCD->LCD_DATA;
-	r=r<<8|(g&0xff);
-#endif
-
- 	return r;
+	if(x>=tftlcd_data.width||y>=tftlcd_data.height)return 0;
+    return HX8357DN_ReadPoint(x, y);
 }
 
 
@@ -208,114 +271,19 @@ void LCD_SSD_BackLightSet(u8 pwm)
 
 void TFTLCD_Init(void)
 {
-	u16 i;
-
-	// TFTLCD_GPIO_Init();
-	// TFTLCD_FSMC_Init();
-
-	HAL_Delay(50);
-
-
-
-#ifdef TFTLCD_HX8357DN
-	LCD_WriteCmd(0Xd0);
-	tftlcd_data.id=LCD_ReadData();	//dummy read
-	tftlcd_data.id=LCD_ReadData();
-#endif
-
-
-
-
-
-
-
-
- 	// printf(" LCD ID:%x\r\n",tftlcd_data.id); //鎵撳嵃LCD ID
-
-
-
-#ifdef TFTLCD_HX8357DN
-	LCD_WriteCmd(0xE9);
-	LCD_WriteData(0x20);
-
-	LCD_WriteCmd(0x11); //Exit Sleep
-	for(i=500; i>0; i--);
-
-	LCD_WriteCmd(0x3A);
-	LCD_WriteData(0x55);  //16Bit colors
-
-	LCD_WriteCmd(0xD1);
-	LCD_WriteData(0x00);
-	LCD_WriteData(0x65); //璋冭瘯姝ゅ€兼敼鍠勬按绾?	LCD_WriteData(0x1F);
-
-	LCD_WriteCmd(0xD0);
-	LCD_WriteData(0x07);
-	LCD_WriteData(0x07);
-	LCD_WriteData(0x80);
-
-	LCD_WriteCmd(0x36); 	 //Set_address_mode
-	LCD_WriteData(0x4c);   	//4c
-
-	LCD_WriteCmd(0xC1);
-	LCD_WriteData(0x10);
-	LCD_WriteData(0x10);
-	LCD_WriteData(0x02);
-	LCD_WriteData(0x02);
-
-	LCD_WriteCmd(0xC0); //Set Default Gamma
-	LCD_WriteData(0x00);
-	LCD_WriteData(0x35);
-	LCD_WriteData(0x00);
-	LCD_WriteData(0x00);
-	LCD_WriteData(0x01);
-	LCD_WriteData(0x02);
-
-	LCD_WriteCmd(0xC4);
-	LCD_WriteData(0x03);
-
-	LCD_WriteCmd(0xC5); //Set frame rate
-	LCD_WriteData(0x01);
-
-	LCD_WriteCmd(0xD2); //power setting
-	LCD_WriteData(0x01);
-	LCD_WriteData(0x22);
-
-	LCD_WriteCmd(0xE7);
-	LCD_WriteData(0x38);
-
-	LCD_WriteCmd(0xF3);
-    LCD_WriteData(0x08);
-	LCD_WriteData(0x12);
-	LCD_WriteData(0x12);
-	LCD_WriteData(0x08);
-
-	LCD_WriteCmd(0xC8); //Set Gamma
-	LCD_WriteData(0x01);
-	LCD_WriteData(0x52);
-	LCD_WriteData(0x37);
-	LCD_WriteData(0x10);
-	LCD_WriteData(0x0d);
-	LCD_WriteData(0x01);
-	LCD_WriteData(0x04);
-	LCD_WriteData(0x51);
-	LCD_WriteData(0x77);
-	LCD_WriteData(0x01);
-	LCD_WriteData(0x01);
-	LCD_WriteData(0x0d);
-	LCD_WriteData(0x08);
-	LCD_WriteData(0x80);
-	LCD_WriteData(0x00);
-
-    LCD_WriteCmd(0x29);
-#endif
-
-
-	LCD_Display_Dir(TFTLCD_DIR);		//0锛氱珫灞? 1锛氭í灞? 榛樿绔栧睆
+    /*
+     * 初始化顺序说明：
+     * 1. 端口层执行硬件复位并打开背光
+     * 2. 控制器层完成 HX8357DN 寄存器初始化
+     * 3. 设置默认显示方向
+     * 4. 清屏为白色，给上层一个确定的初始状态
+     */
+    TFTLCD_Port_Init();
+    HX8357DN_Init(&tftlcd_data);
+	LCD_Display_Dir(TFTLCD_DEFAULT_DIR);
 	LCD_Clear(WHITE);
 }
 
-//娓呭睆鍑芥暟
-//color:瑕佹竻灞忕殑濉厖鑹?void LCD_Clear(u16 color)
 /**
  * @brief 全屏清屏
  * @param color 填充颜色，RGB565
@@ -325,19 +293,12 @@ void TFTLCD_Init(void)
  */
 void LCD_Clear(u16 color)
 {
-	uint16_t i, j ;
-
-	LCD_Set_Window(0, 0, tftlcd_data.width-1, tftlcd_data.height-1);	 //浣滅敤鍖哄煙
-  	for(i=0; i<tftlcd_data.width; i++)
-	{
-		for (j=0; j<tftlcd_data.height; j++)
-		{
-			LCD_WriteData_Color(color);
-		}
-	}
+	LCD_Set_Window(0U, 0U,
+                   (u16)(tftlcd_data.width - 1U),
+                   (u16)(tftlcd_data.height - 1U));
+    LCD_WriteSolidColor(tftlcd_data.width, tftlcd_data.height, color);
 }
 
-// 娓呴櫎鎸囧畾鍖哄煙锛堝～鍏呴鑹诧級
 /**
  * @brief 清除指定矩形区域
  * @param x0 左上角 X
@@ -351,33 +312,20 @@ void LCD_Clear(u16 color)
 void LCD_ClearArea(uint16_t x0, uint16_t y0,
                    uint16_t x1, uint16_t y1)
 {
-    uint16_t i, j;
     uint16_t width, height;
 
-    /* 杈圭晫淇濇姢锛堥槻姝㈣秺鐣岋級 */
-    if (x1 >= tftlcd_data.width)  x1 = tftlcd_data.width - 1;
-    if (y1 >= tftlcd_data.height) y1 = tftlcd_data.height - 1;
-    if (x0 > x1 || y0 > y1) return;
-
-    width  = x1 - x0 + 1;
-    height = y1 - y0 + 1;
-
-    /* 璁剧疆鏄剧ず绐楀彛 */
-    LCD_Set_Window(x0, y0, x1, y1);
-
-    /* 濉厖棰滆壊 */
-    for (i = 0; i < width; i++)
+    if (LCD_NormalizeRect(&x0, &y0, &x1, &y1) == 0U)
     {
-        for (j = 0; j < height; j++)
-        {
-            LCD_WriteData_Color(WHITE);
-        }
+        return;
     }
+
+    width = (uint16_t)(x1 - x0 + 1U);
+    height = (uint16_t)(y1 - y0 + 1U);
+
+    LCD_Set_Window(x0, y0, x1, y1);
+    LCD_WriteSolidColor(width, height, WHITE);
 }
 
-//鍦ㄦ寚瀹氬尯鍩熷唴濉厖鍗曚釜棰滆壊
-//(sx,sy),(ex,ey):濉厖鐭╁舰瀵硅鍧愭爣,鍖哄煙澶у皬涓?(ex-sx+1)*(ey-sy+1)
-//color:瑕佸～鍏呯殑棰滆壊
 /**
  * @brief 用单色填充矩形区域
  * @details
@@ -390,64 +338,101 @@ void LCD_ClearArea(uint16_t x0, uint16_t y0,
  */
 void LCD_Fill(u16 xState,u16 yState,u16 xEnd,u16 yEnd,u16 color)
 {
-	uint16_t temp;
+    uint16_t width;
+    uint16_t height;
 
-    if((xState > xEnd) || (yState > yEnd))
+    if (LCD_NormalizeRect(&xState, &yState, &xEnd, &yEnd) == 0U)
     {
         return;
     }
-	LCD_Set_Window(xState, yState, xEnd, yEnd);
-    xState = xEnd - xState + 1;
-	yState = yEnd - yState + 1;
 
-	while(xState--)
-	{
-	 	temp = yState;
-		while (temp--)
-	 	{
-			LCD_WriteData_Color(color);
-		}
-	}
+    width = (uint16_t)(xEnd - xState + 1U);
+    height = (uint16_t)(yEnd - yState + 1U);
+
+	LCD_Set_Window(xState, yState, xEnd, yEnd);
+    LCD_WriteSolidColor(width, height, color);
 }
 
-//鍦ㄦ寚瀹氬尯鍩熷唴濉厖鎸囧畾棰滆壊鍧?//(sx,sy),(ex,ey):濉厖鐭╁舰瀵硅鍧愭爣,鍖哄煙澶у皬涓?(ex-sx+1)*(ey-sy+1)
-//color:瑕佸～鍏呯殑棰滆壊
+/**
+ * @brief 用颜色数组填充矩形区域
+ * @param sx 起始 X 坐标
+ * @param sy 起始 Y 坐标
+ * @param ex 结束 X 坐标
+ * @param ey 结束 Y 坐标
+ * @param color 指向颜色数组的指针
+ * @details
+ * `color` 数组中的颜色数据应按从左到右、从上到下的顺序排列。
+ * 适合显示图标缓存、软件生成图像或者小尺寸位图。
+ */
 void LCD_Color_Fill(u16 sx,u16 sy,u16 ex,u16 ey,u16 *color)
 {
-	u16 height,width;
-	u16 i,j;
-	width=ex-sx+1; 			// 寰楀埌濉厖鐨勫搴?
-	height=ey-sy+1;			// 楂樺害
+	u16 height;
+	u16 width;
+	uint32_t index;
 
-	for(i=0;i<height;i++)
-	{
-		for(j=0;j<width;j++)
-		{
-			LCD_Set_Window(sx+j, sy+i,ex, ey);
-			LCD_WriteData_Color(color[i*width+j]);
-		}
-	}
+    if (color == NULL)
+    {
+        return;
+    }
+
+    if (LCD_NormalizeRect(&sx, &sy, &ex, &ey) == 0U)
+    {
+        return;
+    }
+
+	width = (u16)(ex - sx + 1U);
+	height = (u16)(ey - sy + 1U);
+
+    LCD_Set_Window(sx, sy, ex, ey);
+    for (index = 0U; index < ((uint32_t)width * (uint32_t)height); index++)
+    {
+        LCD_WriteData_Color(color[index]);
+    }
 }
-//鐢荤偣
-//x,y:鍧愭爣
-//FRONT_COLOR:姝ょ偣鐨勯鑹?void LCD_DrawPoint(u16 x,u16 y)
+
+/**
+ * @brief 使用当前前景色绘制单个像素点
+ * @param x 像素点 X 坐标
+ * @param y 像素点 Y 坐标
+ */
 void LCD_DrawPoint(u16 x,u16 y)
 {
-	LCD_Set_Window(x, y, x, y);  //璁剧疆鐐圭殑浣嶇疆
+    if (LCD_IsPointValid(x, y) == 0U)
+    {
+        return;
+    }
+
+	LCD_Set_Window(x, y, x, y);
 	LCD_WriteData_Color(FRONT_COLOR);
 }
 
-//蹇€熺敾鐐?//x,y:鍧愭爣
-//color:棰滆壊
+/**
+ * @brief 使用指定颜色绘制单个像素点
+ * @param x 像素点 X 坐标
+ * @param y 像素点 Y 坐标
+ * @param color 像素点颜色，RGB565
+ */
 void LCD_DrawFRONT_COLOR(u16 x,u16 y,u16 color)
 {
+    if (LCD_IsPointValid(x, y) == 0U)
+    {
+        return;
+    }
+
 	LCD_Set_Window(x, y, x, y);
 	LCD_WriteData_Color(color);
 }
 
-//鐢荤嚎
-//x1,y1:璧风偣鍧愭爣
-//x2,y2:缁堢偣鍧愭爣
+/**
+ * @brief 使用当前前景色绘制一条直线
+ * @param x1 起点 X 坐标
+ * @param y1 起点 Y 坐标
+ * @param x2 终点 X 坐标
+ * @param y2 终点 Y 坐标
+ * @details
+ * 采用 Bresenham 直线算法，只使用整数运算，
+ * 适合 MCU 环境下的基础图元绘制。
+ */
 void LCD_DrawLine(u16 x1, u16 y1, u16 x2, u16 y2)
 {
 	u16 t;
@@ -480,6 +465,14 @@ void LCD_DrawLine(u16 x1, u16 y1, u16 x2, u16 y2)
 	}
 }
 
+/**
+ * @brief 使用指定颜色绘制一条直线
+ * @param x1 起点 X 坐标
+ * @param y1 起点 Y 坐标
+ * @param x2 终点 X 坐标
+ * @param y2 终点 Y 坐标
+ * @param color 直线颜色，RGB565
+ */
 void LCD_DrawLine_Color(u16 x1, u16 y1, u16 x2, u16 y2,u16 color)
 {
 	u16 t;
@@ -513,29 +506,44 @@ void LCD_DrawLine_Color(u16 x1, u16 y1, u16 x2, u16 y2,u16 color)
 }
 
 
-// 鐢讳竴涓崄瀛楃殑鏍囪
-// x锛氭爣璁扮殑X鍧愭爣
-// y锛氭爣璁扮殑Y鍧愭爣
-// color锛氭爣璁扮殑棰滆壊
+/**
+ * @brief 在指定坐标绘制十字标记
+ * @param x 标记中心 X 坐标
+ * @param y 标记中心 Y 坐标
+ * @param color 标记颜色，RGB565
+ * @details
+ * 默认绘制一个 9x9 十字标记，中心为 3x3 色块，
+ * 常用于触摸调试、坐标校验或关键点标注。
+ */
 void LCD_DrowSign(uint16_t x, uint16_t y, uint16_t color)
 {
     uint8_t i;
 
-    /* 鐢荤偣 */
+    if ((x < 4U) || (y < 4U))
+    {
+        return;
+    }
+
+    if (((x + 4U) >= tftlcd_data.width) || ((y + 4U) >= tftlcd_data.height))
+    {
+        return;
+    }
+
+    /* 绘制中心 3x3 色块 */
     LCD_Set_Window(x-1, y-1, x+1, y+1);
     for(i=0; i<9; i++)
     {
 		LCD_WriteData_Color(color);
     }
 
-    /* 鐢荤珫 */
+    /* 绘制横向笔画 */
     LCD_Set_Window(x-4, y, x+4, y);
     for(i=0; i<9; i++)
     {
 		LCD_WriteData_Color(color);
     }
 
-    /* 鐢绘í */
+    /* 绘制纵向笔画 */
     LCD_Set_Window(x, y-4, x, y+4);
     for(i=0; i<9; i++)
     {
@@ -543,7 +551,13 @@ void LCD_DrowSign(uint16_t x, uint16_t y, uint16_t color)
     }
 }
 
-//鐢荤煩褰?//(x1,y1),(x2,y2):鐭╁舰鐨勫瑙掑潗鏍?void LCD_DrawRectangle(u16 x1, u16 y1, u16 x2, u16 y2)
+/**
+ * @brief 使用当前前景色绘制空心矩形
+ * @param x1 第一个对角点 X 坐标
+ * @param y1 第一个对角点 Y 坐标
+ * @param x2 第二个对角点 X 坐标
+ * @param y2 第二个对角点 Y 坐标
+ */
 void LCD_DrawRectangle(u16 x1, u16 y1, u16 x2, u16 y2)
 {
 	LCD_DrawLine(x1,y1,x2,y1);
@@ -551,7 +565,15 @@ void LCD_DrawRectangle(u16 x1, u16 y1, u16 x2, u16 y2)
 	LCD_DrawLine(x1,y2,x2,y2);
 	LCD_DrawLine(x2,y1,x2,y2);
 }
-//鍦ㄦ寚瀹氫綅缃敾涓€涓寚瀹氬ぇ灏忕殑鍦?//(x,y):涓績鐐?//r    :鍗婂緞
+
+/**
+ * @brief 使用当前前景色绘制空心圆
+ * @param x0 圆心 X 坐标
+ * @param y0 圆心 Y 坐标
+ * @param r 圆半径，单位：像素
+ * @details
+ * 采用 Bresenham 中点画圆算法，通过八分对称关系输出圆周像素点。
+ */
 void LCD_Draw_Circle(u16 x0,u16 y0,u8 r)
 {
 	int a,b;
@@ -581,56 +603,106 @@ void LCD_Draw_Circle(u16 x0,u16 y0,u8 r)
 
 
 
-//鍦ㄦ寚瀹氫綅缃樉绀轰竴涓瓧绗?//x,y:璧峰鍧愭爣
-//num:瑕佹樉绀虹殑瀛楃:" "--->"~"
-//size:瀛椾綋澶у皬 12/16/24
-//mode:鍙犲姞鏂瑰紡(1)杩樻槸闈炲彔鍔犳柟寮?0)
+/**
+ * @brief 显示单个 ASCII 字符
+ * @param x 字符左上角 X 坐标
+ * @param y 字符左上角 Y 坐标
+ * @param num 要显示的字符，范围为 `' '` 到 `'~'`
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param mode 显示模式，`0` 为非叠加，`1` 为叠加
+ * @details
+ * - 非叠加模式：字模位为 0 时会同时绘制背景色，适合普通文字刷新。
+ * - 叠加模式：字模位为 0 时不处理背景，适合在已有图形上覆盖显示。
+ */
 void LCD_ShowChar(u16 x,u16 y,u8 num,u8 size,u8 mode)
 {
-    u8 temp,t1,t;
-	u16 y0=y;
-	u8 csize=(size/8+((size%8)?1:0))*(size/2);		//寰楀埌瀛椾綋涓€涓瓧绗﹀搴旂偣闃甸泦鎵€鍗犵殑瀛楄妭鏁?
-	num=num-' ';//寰楀埌鍋忕Щ鍚庣殑鍊硷紙ASCII瀛楀簱鏄粠绌烘牸寮€濮嬪彇妯★紝鎵€浠?' '灏辨槸瀵瑰簲瀛楃鐨勫瓧搴擄級
-	for(t=0;t<csize;t++)
-	{
-		if(size==12)temp=ascii_1206[num][t]; 	 	//璋冪敤1206瀛椾綋
-		else if(size==16)temp=ascii_1608[num][t];	//璋冪敤1608瀛椾綋
-		else if(size==24)temp=ascii_2412[num][t];	//璋冪敤2412瀛椾綋
-		else return;								//娌℃湁鐨勫瓧搴?
-		for(t1=0;t1<8;t1++)
-		{
-			if(temp&0x80)LCD_DrawFRONT_COLOR(x,y,FRONT_COLOR);
-			else if(mode==0)LCD_DrawFRONT_COLOR(x,y,BACK_COLOR);
-			temp<<=1;
-			y++;
-			if(y>=tftlcd_data.height)return;		//瓒呭尯鍩熶簡
-			if((y-y0)==size)
-			{
-				y=y0;
-				x++;
-				if(x>=tftlcd_data.width)return;	//瓒呭尯鍩熶簡
-				break;
-			}
-		}
-	}
+    u8 temp;
+    u8 bit_index;
+    u8 glyph_index;
+    u8 glyph_bytes;
+    u8 char_width;
+    u16 origin_y;
+    const uint8_t *glyph;
+
+    char_width = LCD_GetAsciiCharWidth(size);
+    glyph = LCD_GetAsciiGlyph(num, size, &glyph_bytes);
+    if ((char_width == 0U) || (glyph == NULL))
+    {
+        return;
+    }
+
+    origin_y = y;
+    for (glyph_index = 0U; glyph_index < glyph_bytes; glyph_index++)
+    {
+        temp = glyph[glyph_index];
+        for (bit_index = 0U; bit_index < 8U; bit_index++)
+        {
+            if ((temp & 0x80U) != 0U)
+            {
+                LCD_DrawFRONT_COLOR(x, y, FRONT_COLOR);
+            }
+            else if (mode == 0U)
+            {
+                LCD_DrawFRONT_COLOR(x, y, BACK_COLOR);
+            }
+
+            temp <<= 1U;
+            y++;
+            if (y >= tftlcd_data.height)
+            {
+                return;
+            }
+
+            if ((u16)(y - origin_y) == size)
+            {
+                y = origin_y;
+                x++;
+                if (x >= tftlcd_data.width)
+                {
+                    return;
+                }
+                break;
+            }
+        }
+    }
 }
-//m^n鍑芥暟
-//杩斿洖鍊?m^n娆℃柟.
+
+/**
+ * @brief 计算整数次幂
+ * @param m 底数
+ * @param n 指数
+ * @retval `m` 的 `n` 次幂
+ * @details
+ * 当前主要服务于十进制数字拆位显示，用于按位提取某一位数字。
+ */
 u32 LCD_Pow(u8 m,u8 n)
 {
 	u32 result=1;
 	while(n--)result*=m;
 	return result;
 }
-//鏄剧ず鏁板瓧,楂樹綅涓?,鍒欎笉鏄剧ず
-//x,y :璧风偣鍧愭爣
-//len :鏁板瓧鐨勪綅鏁?//size:瀛椾綋澶у皬
-//color:棰滆壊
-//num:鏁板€?0~4294967295);
+
+/**
+ * @brief 显示十进制无符号整数，高位 0 不显示
+ * @param x 数字左上角起始 X 坐标
+ * @param y 数字左上角起始 Y 坐标
+ * @param num 要显示的数值
+ * @param len 总显示位数
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @details
+ * 该接口会把前导 0 位置用空格代替，因此更适合普通数值显示。
+ */
 void LCD_ShowNum(u16 x,u16 y,u32 num,u8 len,u8 size)
 {
 	u8 t,temp;
 	u8 enshow=0;
+    u8 char_width;
+
+    char_width = LCD_GetAsciiCharWidth(size);
+    if ((char_width == 0U) || (len == 0U))
+    {
+        return;
+    }
 	for(t=0;t<len;t++)
 	{
 		temp=(num/LCD_Pow(10,len-t-1))%10;
@@ -638,28 +710,40 @@ void LCD_ShowNum(u16 x,u16 y,u32 num,u8 len,u8 size)
 		{
 			if(temp==0)
 			{
-				LCD_ShowChar(x+(size/2)*t,y,' ',size,0);
+				LCD_ShowChar((u16)(x + char_width * t), y, ' ', size, 0U);
 				continue;
 			}else enshow=1;
 
 		}
-	 	LCD_ShowChar(x+(size/2)*t,y,temp+'0',size,0);
+	 	LCD_ShowChar((u16)(x + char_width * t), y, (u8)(temp + '0'), size, 0U);
 	}
 }
 
-//鏄剧ず鏁板瓧,楂樹綅涓?,杩樻槸鏄剧ず
-//x,y:璧风偣鍧愭爣
-//num:鏁板€?0~999999999);
-//len:闀垮害(鍗宠鏄剧ず鐨勪綅鏁?
-//size:瀛椾綋澶у皬
-//mode:
-//[7]:0,涓嶅～鍏?1,濉厖0.
-//[6:1]:淇濈暀
-//[0]:0,闈炲彔鍔犳樉绀?1,鍙犲姞鏄剧ず.
+/**
+ * @brief 显示十进制无符号整数，可配置前导位填充方式
+ * @param x 数字左上角起始 X 坐标
+ * @param y 数字左上角起始 Y 坐标
+ * @param num 要显示的数值
+ * @param len 总显示位数
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param mode 显示模式
+ * @details
+ * - `mode bit7 = 0`：前导 0 用空格填充
+ * - `mode bit7 = 1`：前导 0 直接显示为字符 `0`
+ * - `mode bit0 = 0`：非叠加显示
+ * - `mode bit0 = 1`：叠加显示
+ */
 void LCD_ShowxNum(u16 x,u16 y,u32 num,u8 len,u8 size,u8 mode)
 {
 	u8 t,temp;
 	u8 enshow=0;
+    u8 char_width;
+
+    char_width = LCD_GetAsciiCharWidth(size);
+    if ((char_width == 0U) || (len == 0U))
+    {
+        return;
+    }
 	for(t=0;t<len;t++)
 	{
 		temp=(num/LCD_Pow(10,len-t-1))%10;
@@ -667,36 +751,61 @@ void LCD_ShowxNum(u16 x,u16 y,u32 num,u8 len,u8 size,u8 mode)
 		{
 			if(temp==0)
 			{
-				if(mode&0X80)LCD_ShowChar(x+(size/2)*t,y,'0',size,mode&0X01);
-				else LCD_ShowChar(x+(size/2)*t,y,' ',size,mode&0X01);
- 				continue;
+				if((mode&0X80U) != 0U)LCD_ShowChar((u16)(x + char_width * t), y, '0', size, (u8)(mode&0X01U));
+				else LCD_ShowChar((u16)(x + char_width * t), y, ' ', size, (u8)(mode&0X01U));
+  				continue;
 			}else enshow=1;
 
 		}
-	 	LCD_ShowChar(x+(size/2)*t,y,temp+'0',size,mode&0X01);
+	 	LCD_ShowChar((u16)(x + char_width * t), y, (u8)(temp+'0'), size, (u8)(mode&0X01U));
 	}
 }
-//鏄剧ず瀛楃涓?//x,y:璧风偣鍧愭爣
-//width,height:鍖哄煙澶у皬
-//size:瀛椾綋澶у皬
-//*p:瀛楃涓茶捣濮嬪湴鍧€
+
 /**
  * @brief 显示 ASCII 字符串
+ * @param x 字符串显示区域左上角 X 坐标
+ * @param y 字符串显示区域左上角 Y 坐标
+ * @param width 显示区域宽度
+ * @param height 显示区域高度
+ * @param size 字体高度，可选 `12`、`16`、`24`
+ * @param p 字符串首地址
  * @details
  * 该接口适合显示纯英文、数字和符号。
  * 如果文本里包含中文，应优先使用 `LCD_ShowTextMixed()` 或 `LCD_ShowChinese()`。
  */
 void LCD_ShowString(u16 x,u16 y,u16 width,u16 height,u8 size,u8 *p)
 {
-	u8 x0=x;
-	width+=x;
-	height+=y;
-    while((*p<='~')&&(*p>=' '))//鍒ゆ柇鏄笉鏄潪娉曞瓧绗?
+	u16 x0=x;
+    u16 x_limit;
+    u16 y_limit;
+    u8 char_width;
+
+    if (p == NULL)
     {
-        if(x>=width){x=x0;y+=size;}
-        if(y>=height)break;//閫€鍑?
-        LCD_ShowChar(x,y,*p,size,0);
-        x+=size/2;
+        return;
+    }
+
+    char_width = LCD_GetAsciiCharWidth(size);
+    if ((char_width == 0U) || (width == 0U) || (height == 0U))
+    {
+        return;
+    }
+
+	x_limit = (u16)(x + width);
+	y_limit = (u16)(y + height);
+    while((*p<='~')&&(*p>=' '))
+    {
+        if ((u16)(x + char_width) > x_limit)
+        {
+            x = x0;
+            y = (u16)(y + size);
+        }
+        if ((u16)(y + size) > y_limit)
+        {
+            break;
+        }
+        LCD_ShowChar(x,y,*p,size,0U);
+        x = (u16)(x + char_width);
         p++;
     }
 }
@@ -732,6 +841,128 @@ static void LCD_DrawPlaceholder16x16(uint16_t x, uint16_t y)
     LCD_DrawLine_Color(x + 15, y, x + 15, y + 15, RED);
     LCD_DrawLine_Color(x + 3, y + 3, x + 12, y + 12, RED);
     LCD_DrawLine_Color(x + 12, y + 3, x + 3, y + 12, RED);
+}
+
+static uint8_t LCD_Utf8DecodeCodepoint(const uint8_t *in, uint16_t in_len, uint16_t *consumed, uint32_t *codepoint)
+{
+    uint8_t c0;
+
+    if (in == NULL || consumed == NULL || codepoint == NULL || in_len == 0U)
+    {
+        return 0U;
+    }
+
+    c0 = in[0];
+    if (c0 < 0x80U)
+    {
+        *consumed = 1U;
+        *codepoint = c0;
+        return 1U;
+    }
+
+    if ((c0 & 0xE0U) == 0xC0U && in_len >= 2U &&
+        (in[1] & 0xC0U) == 0x80U)
+    {
+        *consumed = 2U;
+        *codepoint = ((uint32_t)(c0 & 0x1FU) << 6) |
+                     (uint32_t)(in[1] & 0x3FU);
+        return 1U;
+    }
+
+    if ((c0 & 0xF0U) == 0xE0U && in_len >= 3U &&
+        (in[1] & 0xC0U) == 0x80U &&
+        (in[2] & 0xC0U) == 0x80U)
+    {
+        *consumed = 3U;
+        *codepoint = ((uint32_t)(c0 & 0x0FU) << 12) |
+                     ((uint32_t)(in[1] & 0x3FU) << 6) |
+                     (uint32_t)(in[2] & 0x3FU);
+        return 1U;
+    }
+
+    if ((c0 & 0xF8U) == 0xF0U && in_len >= 4U &&
+        (in[1] & 0xC0U) == 0x80U &&
+        (in[2] & 0xC0U) == 0x80U &&
+        (in[3] & 0xC0U) == 0x80U)
+    {
+        *consumed = 4U;
+        *codepoint = ((uint32_t)(c0 & 0x07U) << 18) |
+                     ((uint32_t)(in[1] & 0x3FU) << 12) |
+                     ((uint32_t)(in[2] & 0x3FU) << 6) |
+                     (uint32_t)(in[3] & 0x3FU);
+        return 1U;
+    }
+
+    return 0U;
+}
+
+static uint8_t LCD_TextUtf8ToGb2312(const char *utf8, uint8_t *out, uint16_t out_cap)
+{
+    const uint8_t *in = (const uint8_t *)utf8;
+    uint16_t i = 0U;
+    uint16_t in_len;
+    uint16_t o = 0U;
+
+    if (utf8 == NULL || out == NULL || out_cap == 0U)
+    {
+        return 0U;
+    }
+
+    in_len = (uint16_t)strlen(utf8);
+    while (i < in_len && o + 1U < out_cap)
+    {
+        if (in[i] < 0x80U)
+        {
+            out[o++] = in[i++];
+            continue;
+        }
+
+        {
+            uint16_t consumed = 0U;
+            uint32_t codepoint = 0U;
+
+            if (LCD_Utf8DecodeCodepoint(&in[i], (uint16_t)(in_len - i), &consumed, &codepoint) != 0U)
+            {
+                if (codepoint <= 0xFFFFU)
+                {
+                    WCHAR oem = ff_convert((WCHAR)codepoint, 0U);
+                    if (oem != 0U)
+                    {
+                        if (oem < 0x100U)
+                        {
+                            out[o++] = (uint8_t)oem;
+                        }
+                        else
+                        {
+                            if (o + 2U >= out_cap)
+                            {
+                                break;
+                            }
+                            out[o++] = (uint8_t)((oem >> 8) & 0xFFU);
+                            out[o++] = (uint8_t)(oem & 0xFFU);
+                        }
+                    }
+                    else
+                    {
+                        out[o++] = '?';
+                    }
+                }
+                else
+                {
+                    out[o++] = '?';
+                }
+
+                i = (uint16_t)(i + consumed);
+                continue;
+            }
+        }
+
+        out[o++] = '?';
+        i++;
+    }
+
+    out[o] = '\0';
+    return (o > 0U) ? 1U : 0U;
 }
 
 /**
@@ -881,75 +1112,63 @@ void LCD_ShowFontHZ(u16 x, u16 y, u8 *cn)
  */
 void LCD_ShowChinese(uint16_t x, uint16_t y, const char *str)
 {
-    uint16_t i, row, col;
-    const uint8_t *font;
-    uint16_t data;
+    uint8_t glyph[32];
 
-    while (*str)
+    if (str == NULL)
     {
-        /* ASCII: 8x16 */
-        if ((uint8_t)*str < 0x80)
+        return;
+    }
+
+    while (*str != '\0')
+    {
+        FontCodecToken token;
+        FontCodecResult parse_ret = FontCodec_ParseGB2312((const uint8_t *)str, &token);
+
+        if (parse_ret == FONT_CODEC_ASCII)
         {
-            x += 8;
-            str++;
+            LCD_ShowChar(x, y, token.ascii_char, 16, 0);
+            x = (uint16_t)(x + 8U);
+            str += token.consumed;
             continue;
         }
 
-        /* 3-byte UTF-8 */
-        if (((uint8_t)str[0] & 0xF0) == 0xE0 &&
-            ((uint8_t)str[1] & 0xC0) == 0x80 &&
-            ((uint8_t)str[2] & 0xC0) == 0x80)
+        if (parse_ret == FONT_CODEC_OK)
         {
-            font = NULL;
-
-            for (i = 0; i < Chinese_Count; i++)
+            if (FontStorage_ReadGlyph16(token.glyph_offset, glyph) == FONT_STORAGE_OK)
             {
-                if ((uint8_t)str[0] == Chinese_Index[i][0] &&
-                    (uint8_t)str[1] == Chinese_Index[i][1] &&
-                    (uint8_t)str[2] == Chinese_Index[i][2])
-                {
-                    font = Chinese_Font16x16[i];
-                    break;
-                }
-            }
-
-            if (font != NULL)
-            {
-                for (row = 0; row < 16; row++)
-                {
-                    data = font[row * 2] |
-                          (font[row * 2 + 1] << 8);
-
-                    for (col = 0; col < 16; col++)
-                    {
-                        if (data & (1 << col))
-                        {
-                            LCD_DrawFRONT_COLOR(x + col,
-                                                y + row,
-                                                FRONT_COLOR);
-                        }
-                    }
-                }
-                x += 16;
+                LCD_DrawGlyph16x16(x, y, glyph);
             }
             else
             {
-                x += 16;
+                LCD_DrawPlaceholder16x16(x, y);
             }
 
-            str += 3;
+            x = (uint16_t)(x + 16U);
+            str += token.consumed;
+            continue;
         }
-        else if (((uint8_t)str[0] & 0xE0) == 0xC0 &&
-                 ((uint8_t)str[1] & 0xC0) == 0x80)
-        {
-            x += 8;
-            str += 2;
-        }
-        else
-        {
-            x += 8;
-            str++;
-        }
+
+        x = (uint16_t)(x + 8U);
+        str++;
+    }
+}
+
+void LCD_ShowTextUtf8(uint16_t x, uint16_t y, uint16_t width, uint16_t height, const char *utf8)
+{
+    uint8_t gb[256];
+
+    if (utf8 == NULL)
+    {
+        return;
+    }
+
+    if (LCD_TextUtf8ToGb2312(utf8, gb, (uint16_t)sizeof(gb)) != 0U)
+    {
+        LCD_ShowTextMixed(x, y, width, height, gb);
+    }
+    else
+    {
+        LCD_ShowString(x, y, width, height, 16U, (uint8_t *)utf8);
     }
 }
 // void LCD_ShowChinese(uint16_t x, uint16_t y, const char *str)

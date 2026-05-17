@@ -1,0 +1,95 @@
+<h2>320x480 Sensor Dashboard</h2>
+<p class="subtitle">Single-page layout for 500ms partial refresh on a 3.5-inch portrait LCD</p>
+
+<div class="cards">
+  <div class="card" data-choice="layout-a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="width:320px;height:480px;margin:0 auto;background:#f5f5f5;border-radius:18px;overflow:hidden;border:2px solid #1f2937;">
+        <div style="height:40px;background:#0f766e;color:#fff;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-weight:700;font-size:14px;">
+          <span>Sensor Dashboard</span>
+          <span>500ms</span>
+        </div>
+        <div style="padding:10px;display:grid;grid-template-columns:1fr 1fr;grid-template-rows:110px 120px 120px 1fr;gap:8px;">
+          <div style="grid-column:1 / span 2;background:#ffffff;border:2px solid #0f766e;border-radius:10px;padding:8px;">
+            <div style="font-size:12px;color:#0f766e;font-weight:700;">SYSTEM STATUS</div>
+            <div style="display:flex;justify-content:space-between;margin-top:8px;font-size:12px;">
+              <span>Tick: 012345</span><span>MPU: OK</span><span>DMP: OK</span>
+            </div>
+            <div style="margin-top:10px;font-size:13px;">Only value cells refresh</div>
+          </div>
+          <div style="background:#ffffff;border:2px solid #1d4ed8;border-radius:10px;padding:8px;">
+            <div style="font-size:12px;color:#1d4ed8;font-weight:700;">DHT11</div>
+            <div style="margin-top:12px;font-size:18px;font-weight:700;">26.0 C</div>
+            <div style="margin-top:8px;font-size:16px;">58.0 %RH</div>
+          </div>
+          <div style="background:#ffffff;border:2px solid #ca8a04;border-radius:10px;padding:8px;">
+            <div style="font-size:12px;color:#ca8a04;font-weight:700;">LIGHT</div>
+            <div style="margin-top:12px;font-size:18px;font-weight:700;">ADC 2180</div>
+            <div style="margin-top:8px;font-size:14px;">1.756 V</div>
+            <div style="margin-top:8px;font-size:14px;">NORMAL</div>
+          </div>
+          <div style="grid-column:1 / span 2;background:#ffffff;border:2px solid #7c3aed;border-radius:10px;padding:8px;">
+            <div style="font-size:12px;color:#7c3aed;font-weight:700;">MPU6050 RAW</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:8px;font-size:13px;">
+              <div>AX: -125</div><div>GX: 4</div>
+              <div>AY: 210</div><div>GY: -3</div>
+              <div>AZ: 16384</div><div>GZ: 2</div>
+            </div>
+            <div style="margin-top:8px;font-size:13px;">TEMP: 29.31 C</div>
+          </div>
+          <div style="grid-column:1 / span 2;background:#ffffff;border:2px solid #dc2626;border-radius:10px;padding:8px;">
+            <div style="font-size:12px;color:#dc2626;font-weight:700;">MPU6050 DMP</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-top:12px;font-size:17px;font-weight:700;">
+              <div>P 2.35</div><div>R -1.12</div><div>Y 88.62</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Layout A: Card Grid</h3>
+      <p>Each sensor occupies a fixed block. Best for clean partial refresh because value areas are naturally isolated.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="layout-b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup" style="width:320px;height:480px;margin:0 auto;background:#f8fafc;border-radius:18px;overflow:hidden;border:2px solid #111827;">
+        <div style="height:44px;background:#1e3a8a;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:15px;">
+          Sensor Monitor
+        </div>
+        <div style="padding:10px;">
+          <div style="background:#ffffff;border:2px solid #1e3a8a;border-radius:10px;padding:8px;margin-bottom:10px;">
+            <div style="font-size:12px;font-weight:700;color:#1e3a8a;">STATUS BAR</div>
+            <div style="margin-top:8px;font-size:12px;display:flex;justify-content:space-between;">
+              <span>Refresh 500ms</span><span>MPU OK</span><span>DMP OK</span>
+            </div>
+          </div>
+          <div style="background:#ffffff;border:2px solid #334155;border-radius:10px;padding:0;overflow:hidden;">
+            <div style="display:grid;grid-template-columns:108px 1fr;font-size:12px;">
+              <div style="padding:10px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;font-weight:700;">DHT11 Temp</div>
+              <div style="padding:10px;border-bottom:1px solid #cbd5e1;font-size:18px;font-weight:700;">26.0 C</div>
+              <div style="padding:10px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;font-weight:700;">DHT11 Humi</div>
+              <div style="padding:10px;border-bottom:1px solid #cbd5e1;font-size:18px;font-weight:700;">58.0 %RH</div>
+              <div style="padding:10px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;font-weight:700;">Light ADC</div>
+              <div style="padding:10px;border-bottom:1px solid #cbd5e1;">2180 / 1.756V / NORMAL</div>
+              <div style="padding:10px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;font-weight:700;">MPU Raw</div>
+              <div style="padding:10px;border-bottom:1px solid #cbd5e1;">A(-125,210,16384) G(4,-3,2)</div>
+              <div style="padding:10px;border-right:1px solid #cbd5e1;border-bottom:1px solid #cbd5e1;font-weight:700;">MPU Temp</div>
+              <div style="padding:10px;border-bottom:1px solid #cbd5e1;">29.31 C</div>
+              <div style="padding:10px;border-right:1px solid #cbd5e1;font-weight:700;">DMP</div>
+              <div style="padding:10px;font-size:17px;font-weight:700;">P 2.35 / R -1.12 / Y 88.62</div>
+            </div>
+          </div>
+          <div style="margin-top:10px;background:#e2e8f0;border-radius:8px;padding:8px;font-size:12px;">
+            Table-style alignment, denser information, weaker visual separation.
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Layout B: Status + Table</h3>
+      <p>Uses fewer decorative regions and fits more text. Better density, but partial refresh zones are less visually obvious.</p>
+    </div>
+  </div>
+</div>

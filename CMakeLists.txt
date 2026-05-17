@@ -41,67 +41,54 @@ enable_language(C ASM)
 
 # Create an executable object type
 add_executable(${CMAKE_PROJECT_NAME}
+        Library/gpio/gpio_device.c
+        Library/gpio/gpio_device.h
+        Library/bsp/board_drv_config.h
         Library/led/led.c
         Library/led/led.h
+        Library/led/led_example.c
         Library/tftlcd/tftlcd.c
         Library/tftlcd/tftlcd.h
+        Library/tftlcd/tftlcd_port.c
+        Library/tftlcd/tftlcd_port.h
+        Library/tftlcd/tftlcd_hx8357dn.c
+        Library/tftlcd/tftlcd_hx8357dn.h
+        Library/tftlcd/tftlcd_example.c
         Library/tftlcd/font.h
         Library/tftlcd/picture.h
         Library/key/key.c
         Library/key/key.h
-        Library/SD_RW/sd_rw.c
-        Library/SD_RW/sd_rw.h
-        Library/usart/usart.c
-        Library/usart/usart.h
+        Library/key/key_example.c
         Library/EN25Q128/EN25Q128.c
         Library/EN25Q128/EN25Q128.h
         Library/Light_Sensor/light_sensor.c
         Library/Light_Sensor/light_sensor.h
-        Library/flash/flash.c
-        Library/flash/flash.h
+        Library/Light_Sensor/light_sensor_example.c
         Library/font_storage/font_storage.c
         Library/font_storage/font_storage.h
+        Library/font_storage/font_boot.c
+        Library/font_storage/font_boot.h
         Library/font_codec/font_codec.c
         Library/font_codec/font_codec.h
-        Library/Picture/picture_display.c
-        Library/Picture/picture_display.h
-        Library/Picture/jpeg_decoder.c
-        Library/Picture/jpeg_decoder.h
-        Library/Picture/tjpgd.c
-        Library/Picture/tjpgd.h
-        Library/Picture/tjpgdcnf.h
-        Library/ui/ui_app.c
-        Library/ui/ui_app.h
-        Library/ui/ui_common.c
-        Library/ui/ui_common.h
-        Library/ui/ui_main.c
-        Library/ui/ui_main.h
-        Library/ui/ui_list.c
-        Library/ui/ui_list.h
-        Library/ui/ui_view.c
-        Library/ui/ui_view.h
-        Library/ui/ui_font_import.c
-        Library/ui/ui_font_import.h
-        Library/ui/ui_create_file.c
-        Library/ui/ui_create_file.h
-        Library/rtc/rtc.c
-        Library/rtc/rtc.h
-        Library/beep/beep.c
-        Library/beep/beep.h
-        Library/AT24CXX/at24cxx.h
-        Library/AT24CXX/at24cxx.c
         Library/SoftwareI2C/softwarei2c.c
         Library/SoftwareI2C/softwarei2c.h
+        Library/mpu6050/MPU6050.c
+        Library/mpu6050/MPU6050.h
+        Library/mpu6050/dmp/inv_mpu.c
+        Library/mpu6050/dmp/inv_mpu.h
+        Library/mpu6050/dmp/inv_mpu_dmp_motion_driver.c
+        Library/mpu6050/dmp/inv_mpu_dmp_motion_driver.h
         Library/DHT11/dht11.c
         Library/DHT11/dht11.h
+        Library/DHT11/dht11_example.c
         Library/delay/delay.c
         Library/delay/delay.h
-        Library/touch/touch.c
-        Library/touch/touch.h
-        Library/sram/sram.c
-        Library/sram/sram.h
-        Malloc/malloc.c
-        Malloc/malloc.h
+        Library/delay/delay_example.c
+        Library/beep/beep.c
+        Library/beep/beep.h
+        Library/beep/beep_example.c
+        Library/usart/usart.c
+        Library/usart/usart.h
 )
 
 # Add STM32CubeMX generated sources
@@ -120,7 +107,9 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
-    Malloc
+    Library/gpio
+    Library/bsp
+    Library/mpu6050/dmp
 )
 
 # Add project symbols (macros)

@@ -1,123 +1,118 @@
-//
-// Created by 标语 on 26-1-2.
-//
+﻿#include "key.h"
+#include "gpio_device.h"
+#include "board_drv_config.h"
 
-#include "key.h"
-
-// 按键参数配置
-#define DEBOUNCE_TIME_MS    15   // 消抖时间（毫秒）
-#define SCAN_INTERVAL_MS    10   // 建议主循环每 10ms 调用一次 Key_Scan
-
-// 按键结构体
+/*
+ * 按键驱动设计说明：
+ * 1) 每个按键维护独立状态机（稳定状态/上报标志/边沿时间戳）
+ * 2) 使用固定消抖时间过滤机械抖动
+ * 3) 仅在“按下沿”上报一次事件，避免长按重复触发
+ * 4) 驱动只产生“按键事件”，不直接操作业务外设，保持模块解耦
+ */
 typedef struct {
-    GPIO_TypeDef* port;
-    uint16_t      pin;
-    uint8_t       active_level; // 1=高有效，0=低有效
-    uint8_t       state;        // 当前稳定状态：0=释放，1=按下
-    uint32_t      tick;         // 上次电平变化时间
-} Key_t;
+    uint8_t stable_pressed; /**< 当前稳定状态：1=按下，0=释放 */
+    uint8_t reported;       /**< 当前按下状态是否已上报 */
+    uint32_t edge_tick;     /**< 最近一次状态变化计时参考（ms） */
+} key_runtime_t;
 
-// 定义四个按键
-static Key_t keys[] = {
-    {GPIOE,           KEY0_Pin,     GPIO_PIN_RESET, 0, 0},  // KEY0: 低有效
-    {GPIOE,           KEY1_Pin,     GPIO_PIN_RESET, 0, 0},  // KEY1: 低有效
-    {GPIOE,           KEY2_Pin,     GPIO_PIN_RESET, 0, 0},  // KEY2: 低有效
-    {KEY_UP_GPIO_Port,KEY_UP_Pin,   GPIO_PIN_SET,   0, 0}   // KEY_UP: 高有效
+/*
+ * 板级按键静态配置表：
+ * - 下标 0/1/2/3 对应 KEY0/KEY1/KEY2/KEY_UP
+ * - 每项包含 GPIO 端口、引脚、有效电平信息
+ */
+static const gpio_device_t s_key_table[] = {
+    BOARD_KEY_CONFIG_TABLE
 };
 
-#define KEY_COUNT (sizeof(keys) / sizeof(keys[0]))
-
-#if 0
-/**
- * @brief 旧版非阻塞按键扫描 (存在 Bug)
- * @note  原因分析：使用 uint8_t 变量 last_reported 存储单个按键位图。
- *        如果在多键按下或引脚噪声干扰下，last_reported 会被不同按键循环覆盖，
- *        导致 key != last_reported 的判断逻辑失效，变成“自动连点击”。
+/*
+ * 按键运行时状态表：
+ * - 与 s_key_table 按下标一一对应
+ * - 仅保存“运行过程中变化”的状态，不保存硬件配置
  */
-KeyName_t Key_Scan_Old(void)
-{
-    static uint8_t last_reported = 0; // 记录上次返回的按键，避免重复触发
-    uint8_t any_pressed = 0;
-    KeyName_t triggered_key = KEY_NONE;
-    uint32_t now = HAL_GetTick();
-
-    for (int i = 0; i < KEY_COUNT; i++)
-    {
-        Key_t* k = &keys[i];
-        uint8_t raw = (HAL_GPIO_ReadPin(k->port, k->pin) == k->active_level) ? 1 : 0;
-
-        if (raw != k->state)
-        {
-            // 电平变化，开始消抖计时
-            k->tick = now;
-            k->state = raw; // 暂存新状态（未确认）
-        }
-        else if (k->state == 1 && (now - k->tick) >= DEBOUNCE_TIME_MS)
-        {
-            // 确认按下（消抖完成）
-            any_pressed = 1;
-            if (last_reported != (1U << i))
-            {
-                triggered_key = (KeyName_t)i;
-                last_reported = (1U << i);
-            }
-        }
-    }
-
-    if (!any_pressed)
-    {
-        last_reported = 0; // 所有键都释放了，清除记录
-    }
-
-    return triggered_key;
-}
-#endif
+static key_runtime_t s_key_rt[BOARD_KEY_COUNT];
 
 /**
- * @brief 修复版非阻塞按键扫描 (支持独立记录按键状态)
- * @note  解决方案：改用 Bitmask (位掩码) 来分别记录每一个按键的“已上报”状态。
- *        只有当物理状态为按下，且该位掩码中尚未标记“已上报”时，才产生一次触发。
- *        按键释放时，位掩码对应位清零。这样即使按住不放或存在引脚干扰，也不会连发。
- * @retval 被触发的按键枚举，无按键或已处理则返回 KEY_NONE
+ * @brief 初始化按键运行时状态机
+ * @note
+ * - 读取当前按键电平作为初始稳定状态，避免上电后立即误触发
+ * - 建议在 `MX_GPIO_Init()` 后、主循环前调用一次
+ */
+void Key_Init(void)
+{
+    for (uint32_t i = 0; i < BOARD_KEY_COUNT; ++i) {
+        s_key_rt[i].stable_pressed = gpio_device_read(&s_key_table[i]);
+        s_key_rt[i].reported = 0U;
+        s_key_rt[i].edge_tick = HAL_GetTick();
+    }
+}
+
+/**
+ * @brief 扫描按键并返回单次按下事件
+ * @return KeyName_t
+ * - 返回 KEY0/KEY1/KEY2/KEY_UP：表示本次扫描检测到对应按键“新按下”
+ * - 返回 KEY_NONE：表示无新按键事件
+ *
+ * @note 工作流程（单键）：
+ * 1. 读取原始状态 raw_pressed（已统一为逻辑状态）
+ * 2. 若 raw 与 stable 不同：进入消抖确认阶段
+ * 3. 变化持续时间超过 KEY_DEFAULT_DEBOUNCE_MS 后才更新 stable
+ * 4. stable=按下 且未上报 -> 上报一次并锁定
+ * 5. stable=释放 -> 清除锁定，允许下次按下再次上报
  */
 KeyName_t Key_Scan(void)
 {
-    static uint8_t reported_mask = 0; // 独立位图记录，每个 bit 对应一个按键
-    KeyName_t triggered_key = KEY_NONE;
-    uint32_t now = HAL_GetTick();
+    const uint32_t now = HAL_GetTick();
 
-    for (int i = 0; i < KEY_COUNT; i++)
-    {
-        Key_t* k = &keys[i];
-        uint8_t raw = (HAL_GPIO_ReadPin(k->port, k->pin) == k->active_level) ? 1 : 0;
+    for (uint32_t i = 0; i < BOARD_KEY_COUNT; ++i) {
+        key_runtime_t *rt = &s_key_rt[i];
+        const uint8_t raw_pressed = gpio_device_read(&s_key_table[i]);
 
-        // 状态变化检测
-        if (raw != k->state)
-        {
-            k->tick = now;
-            k->state = raw; 
-        }
-        // 状态已稳定，检查是否按下
-        else if (k->state == 1)
-        {
-            // 消抖时间达成
-            if ((now - k->tick) >= DEBOUNCE_TIME_MS)
-            {
-                // 如果该位尚未上报，则触发单次事件
-                if (!(reported_mask & (1 << i)))
-                {
-                    triggered_key = (KeyName_t)i;
-                    reported_mask |= (1 << i); // 锁定上报状态
+        /*
+         * 场景1：采样状态与稳定状态不一致
+         * 含义：按键可能刚变化，也可能是抖动；先进入消抖观察
+         */
+        if (raw_pressed != rt->stable_pressed) {
+            /*
+             * 仅当变化持续超过消抖窗口才确认状态切换，抑制机械抖动误判
+             */
+            if ((now - rt->edge_tick) >= KEY_DEFAULT_DEBOUNCE_MS) {
+                rt->stable_pressed = raw_pressed;
+                rt->edge_tick = now;
+
+                /*
+                 * 一旦确认按键已释放，必须清除 reported 锁
+                 * 否则下次按下将不会再次触发事件
+                 */
+                if (rt->stable_pressed == 0U) {
+                    rt->reported = 0U;
                 }
             }
+            continue;
         }
-        // 状态已稳定，检查是否释放
-        else if (k->state == 0)
-        {
-            // 按键抬起，清除上报锁定标记
-            reported_mask &= ~(1 << i);
+
+        /*
+         * 场景2：采样状态与稳定状态一致
+         * 含义：当前处于稳定区间，更新时间戳作为下一次变化的起点
+         */
+        rt->edge_tick = now;
+
+        /*
+         * 场景3：稳定按下且尚未上报
+         * 触发一次事件后立刻置 reported=1，防止长按期间重复触发
+         */
+        if (rt->stable_pressed == 1U && rt->reported == 0U) {
+            rt->reported = 1U;
+            return (KeyName_t)i;
+        }
+
+        /*
+         * 场景4：稳定释放
+         * 兜底清理 reported，确保下一次按下可触发
+         */
+        if (rt->stable_pressed == 0U) {
+            rt->reported = 0U;
         }
     }
 
-    return triggered_key;
+    return KEY_NONE;
 }

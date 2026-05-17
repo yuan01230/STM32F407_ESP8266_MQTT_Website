@@ -4,6 +4,9 @@
 #include <string.h>
 
 #include "../Picture/picture_display.h"
+#include "../audio/mp3_decode_test.h"
+#include "../audio/mp3_probe.h"
+#include "../audio/wav_player.h"
 #include "../tftlcd/tftlcd.h"
 #include "ui_common.h"
 
@@ -136,6 +139,65 @@ void UI_View_Show(uint16_t index)
     }
 
     /* 第 5 步：非图片文件按原来的文本/十六进制预览逻辑处理。 */
+    if (WavPlayer_IsWavExtension(g_file_entries[index].ext))
+    {
+        WavInfo wav_info;
+        WavPlayerResult wav_ret;
+
+        FRONT_COLOR = GREEN;
+        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)"WAV playback...");
+        printf("[KEY2] Play WAV: %s\r\n", path);
+
+        wav_ret = WavPlayer_PlayFile(path, &wav_info);
+
+        FRONT_COLOR = (wav_ret == WAV_PLAYER_OK) ? GREEN : RED;
+        snprintf(line,
+                 sizeof(line),
+                 "WAV: %s",
+                 WavPlayer_ResultString(wav_ret));
+        LCD_ShowString(8, 104, 304, 16, 16, (uint8_t *)line);
+
+        if (wav_ret == WAV_PLAYER_OK || wav_ret == WAV_PLAYER_ERR_UNSUPPORTED)
+        {
+            FRONT_COLOR = BLACK;
+            snprintf(line,
+                     sizeof(line),
+                     "%luHz %uch %ubit",
+                     (unsigned long)wav_info.sample_rate,
+                     (unsigned int)wav_info.channels,
+                     (unsigned int)wav_info.bits_per_sample);
+            LCD_ShowString(8, 124, 304, 16, 16, (uint8_t *)line);
+        }
+
+        FRONT_COLOR = BLUE;
+        LCD_DrawLine(0, 300, 319, 300);
+        LCD_ShowString(8, 308, 304, 16, 16, (uint8_t *)"KEY0/KEY2: Back List");
+        return;
+    }
+
+    if (Mp3Probe_IsMp3Extension(g_file_entries[index].ext))
+    {
+        Mp3DecodeTestResult mp3_ret;
+
+        FRONT_COLOR = GREEN;
+        LCD_ShowString(8, 84, 304, 16, 16, (uint8_t *)"MP3 playback...");
+        printf("[KEY2] Play MP3: %s\r\n", path);
+
+        mp3_ret = Mp3DecodeTest_File(path);
+
+        FRONT_COLOR = (mp3_ret == MP3_DECODE_TEST_OK) ? GREEN : RED;
+        snprintf(line,
+                 sizeof(line),
+                 "MP3: %s",
+                 Mp3DecodeTest_ResultString(mp3_ret));
+        LCD_ShowString(8, 104, 304, 16, 16, (uint8_t *)line);
+
+        FRONT_COLOR = BLUE;
+        LCD_DrawLine(0, 300, 319, 300);
+        LCD_ShowString(8, 308, 304, 16, 16, (uint8_t *)"KEY0/KEY2: Back List");
+        return;
+    }
+
     res = f_open(&file, path, FA_READ);
     if (res != FR_OK)
     {
