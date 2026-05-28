@@ -1,0 +1,503 @@
+#include "sd_rw.h"
+#include "main.h"
+#include "fatfs.h"
+#include "../tftlcd/tftlcd.h"
+
+#include <stdio.h>
+#include <string.h>
+
+/*
+ * 说明：
+ * - 本文件封装了一组面向演示页面的 SD 文件操作。
+ * - 它不是通用文件系统抽象层，而是“读写 SD + 直接在 LCD 和串口输出结果”的组合模块。
+ * - 当前四条主流程分别是：容量统计、创建文档、读取文档、列出根目录文件。
+ */
+
+#define TEST_BUFFER_SIZE 512
+#define DEFAULT_DOC_FILENAME "default.txt"
+
+extern SD_HandleTypeDef hsd;
+extern RTC_HandleTypeDef hrtc;
+
+static uint8_t read_buffer[TEST_BUFFER_SIZE];
+static char latest_filename[64] = {0};
+static uint32_t latest_read_size = 0;
+static HAL_SD_CardInfoTypeDef card_info;
+
+static uint8_t SD_Check_Storage_Size(void);
+static uint8_t SD_Create_Document(void);
+static uint8_t SD_Read_Document(void);
+static uint8_t SD_List_All_Files(void);
+
+/**
+ * @brief 统计 SD 卡容量和根目录文件总量
+ * @return 1 成功，0 失败
+ * @details
+ * 处理流程：
+ * 1. 通过 `f_getfree()` 获取 FATFS 空闲簇信息；
+ * 2. 结合 SD 卡扇区大小换算总容量、已用容量和剩余容量；
+ * 3. 扫描根目录下的普通文件，统计文件数量和总大小；
+ * 4. 同时把结果输出到串口和 LCD 页面。
+ */
+
+static uint8_t SD_Check_Storage_Size(void)
+{
+    FATFS *fs;
+    DWORD fre_clust, fre_sect, tot_sect;
+    FRESULT res;
+    char disp_buf[128];
+    uint32_t file_total_size = 0;
+    uint32_t file_count = 0;
+    DIR dir;
+    FILINFO fno;
+
+    printf("\r\n[Storage Check] Getting storage information...\r\n");
+    HAL_SD_GetCardInfo(&hsd, &card_info);
+
+    res = f_getfree("0:/", &fre_clust, &fs);
+    if(res != FR_OK)
+    {
+        printf("[Storage Check] f_getfree failed: %d\r\n", res);
+        return 0;
+    }
+
+    tot_sect = (fs->n_fatent - 2) * fs->csize;
+    fre_sect = fre_clust * fs->csize;
+
+    uint32_t sector_size = card_info.LogBlockSize;
+    uint32_t total_mb = (uint32_t)((uint64_t)tot_sect * sector_size / (1024 * 1024));
+    uint32_t free_mb = (uint32_t)((uint64_t)fre_sect * sector_size / (1024 * 1024));
+    uint32_t used_mb = total_mb - free_mb;
+
+    res = f_opendir(&dir, "0:/");
+    if(res == FR_OK)
+    {
+        while(1)
+        {
+            res = f_readdir(&dir, &fno);
+            if(res != FR_OK || fno.fname[0] == 0)
+                break;
+
+            if(fno.fname[0] == '.' || (fno.fattrib & AM_DIR))
+                continue;
+
+            file_total_size += fno.fsize;
+            file_count++;
+        }
+        f_closedir(&dir);
+    }
+
+    uint32_t file_total_kb = file_total_size / 1024;
+
+    printf("\r\n========== Storage Size Info ==========\r\n");
+    printf("Total Space:    %lu MB\r\n", total_mb);
+    printf("Used Space:     %lu MB\r\n", used_mb);
+    printf("Free Space:     %lu MB\r\n", free_mb);
+    printf("Files Count:    %lu\r\n", file_count);
+    printf("Files Total:    %lu KB (%lu bytes)\r\n", file_total_kb, file_total_size);
+    printf("Usage:          %lu%%\r\n", (total_mb > 0) ? (used_mb * 100 / total_mb) : 0);
+    printf("Sector Size:    %lu Bytes\r\n", sector_size);
+    printf("=========================================\r\n\r\n");
+
+    BACK_COLOR = WHITE;
+    LCD_Fill(0, 30, 240, 220, WHITE);
+
+    FRONT_COLOR = BLUE;
+    LCD_ShowString(10, 30, 220, 24, 24, (uint8_t*)"SD Card Capacity:");
+    FRONT_COLOR = BLACK;
+    sprintf(disp_buf, "Total: %lu MB", total_mb);
+    LCD_ShowString(10, 60, 220, 24, 24, (uint8_t*)disp_buf);
+    sprintf(disp_buf, "Used:  %lu MB", used_mb);
+    LCD_ShowString(10, 90, 220, 24, 24, (uint8_t*)disp_buf);
+    sprintf(disp_buf, "Free:  %lu MB", free_mb);
+    LCD_ShowString(10, 120, 220, 24, 24, (uint8_t*)disp_buf);
+    LCD_DrawLine(0, 150, 240, 150);
+    FRONT_COLOR = BLUE;
+    LCD_ShowString(10, 155, 220, 24, 24, (uint8_t*)"File Statistics:");
+    FRONT_COLOR = GREEN;
+    sprintf(disp_buf, "Files: %lu", file_count);
+    LCD_ShowString(10, 185, 220, 24, 24, (uint8_t*)disp_buf);
+    sprintf(disp_buf, "Size: %lu KB", file_total_kb);
+    LCD_ShowString(10, 215, 220, 24, 24, (uint8_t*)disp_buf);
+
+    return 1;
+}
+
+/**
+ * @brief 在根目录创建默认测试文档
+ * @return 1 成功，0 失败
+ * @details
+ * 当前实现会读取 RTC 时间，拼出一段固定格式的文本内容，
+ * 然后以 `default.txt` 的名字写入 SD 卡根目录。
+ * 该函数主要用于验证：SD 写文件链路、RTC 取时链路以及 LCD 结果展示链路。
+ */
+static uint8_t SD_Create_Document(void)
+{
+    FIL file;
+    UINT bytes_written;
+    FRESULT res;
+    char doc_content[384];
+    RTC_TimeTypeDef sTime;
+    RTC_DateTypeDef sDate;
+    const char *filename = DEFAULT_DOC_FILENAME;
+
+    printf("\r\n[Create Doc] Creating new document...\r\n");
+
+    HAL_RTC_GetTime(&hrtc, &sTime, RTC_FORMAT_BIN);
+    HAL_RTC_GetDate(&hrtc, &sDate, RTC_FORMAT_BIN);
+
+    strncpy(latest_filename, filename, sizeof(latest_filename) - 1);
+    latest_filename[sizeof(latest_filename) - 1] = '\0';
+
+    printf("[Create Doc] Filename: %s\r\n", filename);
+
+    (void)snprintf(doc_content, sizeof(doc_content),
+             "=====================================\r\n"
+             "  STM32F407 SDIO Create Document Demo\r\n"
+             "=====================================\r\n\r\n"
+             "Create Date: %04d-%02d-%02d\r\n"
+             "Create Time: %02d:%02d:%02d\r\n"
+             "Week Day: %d\r\n\r\n"
+             "File Name: %s\r\n\r\n"
+             "This file is generated by STM32 SDIO + FATFS.\r\n"
+             "=====================================\r\n",
+             2000 + sDate.Year, sDate.Month, sDate.Date,
+             sTime.Hours, sTime.Minutes, sTime.Seconds,
+             sDate.WeekDay, filename);
+
+    uint32_t len = (uint32_t)strlen(doc_content);
+
+    res = f_open(&file, filename, FA_CREATE_ALWAYS | FA_WRITE);
+    if(res != FR_OK)
+    {
+        printf("[Create Doc] f_open failed: %d\r\n", res);
+        return 0;
+    }
+
+    res = f_write(&file, doc_content, len, &bytes_written);
+    if(res != FR_OK)
+    {
+        printf("[Create Doc] f_write failed: %d\r\n", res);
+        f_close(&file);
+        return 0;
+    }
+
+    f_close(&file);
+
+    printf("[Create Doc] Success: %u bytes written\r\n", bytes_written);
+    printf("[Create Doc] File: %s\r\n", filename);
+
+    return 1;
+}
+
+/**
+ * @brief 读取默认测试文档并缓存到读缓冲区
+ * @return 1 成功，0 失败
+ * @details
+ * 这里读取的是 `default.txt`，主要用于验证：
+ * 1. SD 文件打开是否正常；
+ * 2. 文件内容读取是否正常；
+ * 3. 读取结果能否同时输出到串口和 LCD。
+ */
+static uint8_t SD_Read_Document(void)
+{
+    FIL file;
+    UINT bytes_read;
+    FRESULT res;
+    const char *target_filename = DEFAULT_DOC_FILENAME;
+
+    printf("\r\n[Read Doc] Reading document...\r\n");
+
+    strncpy(latest_filename, target_filename, sizeof(latest_filename) - 1);
+    latest_filename[sizeof(latest_filename) - 1] = '\0';
+
+    res = f_open(&file, target_filename, FA_READ);
+    if(res != FR_OK)
+    {
+        printf("[Read Doc] f_open failed: %d\r\n", res);
+        printf("[Read Doc] File: %s\r\n", target_filename);
+        printf("[Read Doc] 提示：请先按KEY1创建文档\r\n");
+        return 0;
+    }
+
+    printf("[Read Doc] Opening: %s\r\n", target_filename);
+
+    memset(read_buffer, 0, TEST_BUFFER_SIZE);
+    res = f_read(&file, read_buffer, TEST_BUFFER_SIZE - 1, &bytes_read);
+    if(res != FR_OK)
+    {
+        printf("[Read Doc] f_read failed: %d\r\n", res);
+        f_close(&file);
+        return 0;
+    }
+
+    read_buffer[bytes_read] = '\0';
+    latest_read_size = bytes_read;
+
+    printf("\r\n========== Document Content ==========\r\n");
+    printf("File Size: %u bytes\r\n", bytes_read);
+    printf("--------------------------------------\r\n");
+    printf("%s\r\n", read_buffer);
+    printf("========================================\r\n\r\n");
+
+    f_close(&file);
+    return 1;
+}
+
+/**
+ * @brief 扫描并列出根目录下的全部可见文件
+ * @return 1 成功，0 失败
+ * @details
+ * 当前列表页逻辑已经迁移到 `ui` 模块，这里的实现保留为演示式文件清单页面：
+ * - 串口输出完整列表；
+ * - LCD 只显示可见范围内的一部分条目；
+ * - 超出 LCD 高度时，通过底部提示告知“更多内容请看串口”。
+ */
+static uint8_t SD_List_All_Files(void)
+{
+    DIR dir;
+    FILINFO fno;
+    FRESULT res;
+    uint32_t file_count = 0;
+    uint32_t dir_count = 0;
+    uint32_t total_size = 0;
+    char disp_buf[64];
+    uint16_t lcd_line = 65;
+    uint8_t overflow = 0;
+    const uint16_t footer_line_y = 445;
+    const uint8_t line_step = 18;
+
+    printf("\r\n========== File List ==========\r\n");
+
+    BACK_COLOR = WHITE;
+    LCD_Clear(WHITE);
+    FRONT_COLOR = BLUE;
+    LCD_ShowString(20, 5, 280, 24, 24, (uint8_t*)"SD Card Files List");
+    LCD_DrawLine(0, 35, 320, 35);
+    LCD_ShowString(10, 42, 220, 16, 16, (uint8_t*)"File Name");
+    LCD_ShowString(220, 42, 90, 16, 16, (uint8_t*)"Size(B)");
+    LCD_DrawLine(0, 60, 320, 60);
+
+    res = f_opendir(&dir, "0:/");
+    if(res != FR_OK)
+    {
+        printf("[List Files] f_opendir failed: %d\r\n", res);
+        FRONT_COLOR = RED;
+        LCD_ShowString(10, 80, 300, 16, 16, (uint8_t*)"Open root dir failed");
+        return 0;
+    }
+
+    FRONT_COLOR = BLACK;
+    while(1)
+    {
+        res = f_readdir(&dir, &fno);
+        if(res != FR_OK || fno.fname[0] == 0)
+            break;
+
+        if(fno.fname[0] == '.')
+            continue;
+
+        if(fno.fattrib & AM_DIR)
+        {
+            dir_count++;
+            printf("[DIR]  %s\r\n", fno.fname);
+            continue;
+        }
+
+        file_count++;
+        total_size += fno.fsize;
+        printf("[FILE] %-20s %lu bytes\r\n", fno.fname, fno.fsize);
+
+        if(lcd_line <= (footer_line_y - 20))
+        {
+            snprintf(disp_buf, sizeof(disp_buf), "%-22.22s %8lu", fno.fname, fno.fsize);
+            LCD_ShowString(10, lcd_line, 300, 16, 16, (uint8_t*)disp_buf);
+            lcd_line += line_step;
+        }
+        else
+        {
+            overflow = 1;
+        }
+    }
+
+    f_closedir(&dir);
+
+    printf("\r\n========== Summary ==========\r\n");
+    printf("Files:      %lu\r\n", file_count);
+    printf("Folders:    %lu\r\n", dir_count);
+    printf("Total Size: %lu bytes (%lu KB)\r\n", total_size, total_size / 1024);
+    printf("===============================\r\n\r\n");
+
+    FRONT_COLOR = BLUE;
+    LCD_DrawLine(0, footer_line_y, 320, footer_line_y);
+    snprintf(disp_buf, sizeof(disp_buf), "Files:%lu  Dirs:%lu", file_count, dir_count);
+    LCD_ShowString(10, 452, 200, 16, 16, (uint8_t*)disp_buf);
+    snprintf(disp_buf, sizeof(disp_buf), "Total:%luB", total_size);
+    LCD_ShowString(210, 452, 100, 16, 16, (uint8_t*)disp_buf);
+
+    if(file_count == 0)
+    {
+        FRONT_COLOR = RED;
+        LCD_ShowString(10, 80, 300, 16, 16, (uint8_t*)"No file found");
+    }
+    else if(overflow)
+    {
+        FRONT_COLOR = RED;
+        LCD_ShowString(10, footer_line_y - 18, 300, 16, 16, (uint8_t*)"More files in Serial...");
+    }
+
+    return 1;
+}
+
+/**
+ * @brief 显示“存储容量统计”页面
+ * @details
+ * 这是一个页面级封装函数：
+ * - 先清屏；
+ * - 再执行容量统计；
+ * - 最后补上底部提示信息。
+ */
+void LCD_Show_Storage_Size_Menu(void)
+{
+    LCD_Clear(WHITE);
+    SD_Check_Storage_Size();
+    FRONT_COLOR = BLUE;
+    LCD_DrawLine(0, 250, 320, 250);
+    LCD_ShowString(10, 260, 220, 16, 16, (uint8_t*)"Auto return in 30s...");
+    LCD_DrawLine(0, 300, 320, 300);
+}
+
+/**
+ * @brief 显示“创建文档结果”页面
+ * @details
+ * 页面内容包括：
+ * - 创建是否成功
+ * - 文件名
+ * - RTC 时间
+ * - 文档内容摘要
+ */
+void LCD_Show_Create_Doc_Menu(void)
+{
+    LCD_Clear(WHITE);
+    FRONT_COLOR = BLUE;
+    LCD_ShowString(40, 5, 160, 24, 24, (uint8_t*)"Create Document");
+    LCD_DrawLine(0, 35, 240, 35);
+
+    if(SD_Create_Document())
+    {
+        FRONT_COLOR = GREEN;
+        LCD_ShowString(10, 50, 220, 24, 24, (uint8_t*)"Create Success!");
+
+        FRONT_COLOR = BLACK;
+        char disp_buf[64];
+        (void)snprintf(disp_buf, sizeof(disp_buf), "File: %.57s", latest_filename);
+        LCD_ShowString(10, 85, 220, 24, 24, (uint8_t*)disp_buf);
+        LCD_ShowString(10, 120, 220, 24, 24, (uint8_t*)"Content: RTC Time");
+    }
+    else
+    {
+        FRONT_COLOR = RED;
+        LCD_ShowString(10, 50, 220, 24, 24, (uint8_t*)"Create Failed!");
+    }
+
+    FRONT_COLOR = BLUE;
+    LCD_DrawLine(0, 250, 320, 250);
+    LCD_ShowString(10, 260, 220, 16, 16, (uint8_t*)"Auto return in 30s...");
+    LCD_DrawLine(0, 300, 320, 300);
+}
+
+/**
+ * @brief 显示“读取文档结果”页面
+ * @details
+ * 页面会显示：
+ * - 目标文件名
+ * - 读取结果
+ * - 读取字节数
+ * - 文档内容预览
+ */
+void LCD_Show_Read_Doc_Menu(void)
+{
+    LCD_Clear(WHITE);
+    FRONT_COLOR = BLUE;
+    LCD_ShowString(40, 5, 160, 24, 24, (uint8_t*)"Read Document");
+    LCD_DrawLine(0, 35, 240, 35);
+
+    if(SD_Read_Document())
+    {
+        FRONT_COLOR = GREEN;
+        LCD_ShowString(10, 50, 220, 24, 24, (uint8_t*)"Read Success!");
+
+        FRONT_COLOR = BLACK;
+        char disp_buf[128];
+        (void)snprintf(disp_buf, sizeof(disp_buf), "File: %.57s", latest_filename);
+        LCD_ShowString(10, 85, 300, 16, 16, (uint8_t*)disp_buf);
+        (void)snprintf(disp_buf, sizeof(disp_buf), "Size: %lu bytes", latest_read_size);
+        LCD_ShowString(10, 110, 300, 16, 16, (uint8_t*)disp_buf);
+
+        uint16_t index = 0;
+        uint16_t lcd_y = 145;
+        const uint16_t footer_y = 445;
+        const uint8_t max_chars_per_line = 37;
+        uint8_t has_content_line = 0;
+
+        FRONT_COLOR = BLUE;
+        LCD_ShowString(10, 130, 300, 16, 16, (uint8_t*)"Content:");
+        FRONT_COLOR = BLACK;
+
+        while(read_buffer[index] != '\0' && lcd_y <= (footer_y - 16))
+        {
+            char line_buf[38] = {0};
+            uint8_t pos = 0;
+
+            while(read_buffer[index] != '\0' && pos < max_chars_per_line)
+            {
+                char ch = (char)read_buffer[index++];
+                if(ch == '\r')
+                    continue;
+                if(ch == '\n')
+                    break;
+                if(ch < 32 || ch > 126)
+                    ch = ' ';
+                line_buf[pos++] = ch;
+            }
+
+            if(line_buf[0] == '\0')
+            {
+                if(read_buffer[index] == '\0')
+                    break;
+                continue;
+            }
+
+            LCD_ShowString(10, lcd_y, 300, 16, 16, (uint8_t*)line_buf);
+            lcd_y += 16;
+            has_content_line = 1;
+        }
+
+        if(has_content_line == 0)
+        {
+            LCD_ShowString(10, 145, 300, 16, 16, (uint8_t*)"(empty file)");
+        }
+    }
+    else
+    {
+        FRONT_COLOR = RED;
+        LCD_ShowString(10, 50, 220, 24, 24, (uint8_t*)"Read Failed!");
+        LCD_ShowString(10, 85, 220, 16, 16, (uint8_t*)"No file created yet");
+    }
+
+    LCD_DrawLine(0, 445, 320, 445);
+    FRONT_COLOR = BLUE;
+    LCD_ShowString(10, 452, 300, 16, 16, (uint8_t*)"Auto return in 30s...");
+}
+
+/**
+ * @brief 显示“根目录文件列表”演示页面
+ * @details
+ * 该页面和新的通用文件浏览器并存：
+ * - 这里更像一个调试/演示页面；
+ * - 真正的目录浏览能力由 `ui` 模块负责。
+ */
+void LCD_Show_List_Files_Menu(void)
+{
+    SD_List_All_Files();
+}

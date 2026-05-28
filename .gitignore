@@ -1,6 +1,17 @@
 build/
 build-codex/
 cmake-build-*/
+Debug/
 
 .idea/
 .qoder/
+.superpowers/
+
+# Local-only secrets and runtime state
+Project/Library/aliyun_iot/aliyun_iot_config.local.h
+Website/aliyun-iot-dashboard/.env
+Website/aliyun-iot-dashboard/server/.env
+Website/aliyun-iot-dashboard/server/state.json
+Website/aliyun-iot-dashboard/node_modules/
+Website/aliyun-iot-dashboard/server/node_modules/
+Website/aliyun-iot-dashboard/dist/

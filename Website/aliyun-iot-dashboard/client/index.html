@@ -1,0 +1,331 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>阿里云物联网终端可视化与智能指令交互系统</title>
+  <meta name="description" content="阿里云物联网平台终端设备数据实时展示与双向指令下发智能仪表盘。支持高仿真模拟运行及真实阿里云IoT SDK云连接，提供暗黑科技感与实时控制台日志反馈。">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Fira+Code:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="ambient-orb orb-purple" id="orb-1"></div>
+  <div class="ambient-orb orb-blue" id="orb-2"></div>
+  <div class="ambient-orb orb-cyan" id="orb-3"></div>
+
+  <div class="app-container">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <i class="fa-solid fa-satellite-dish brand-icon"></i>
+        <span>ALIYUN IoT</span>
+      </div>
+
+      <div class="connection-status-panel">
+        <div class="status-indicator">
+          <span class="status-dot pulsing" id="status-indicator-dot"></span>
+          <span class="status-label" id="status-indicator-label">正在检测通道...</span>
+        </div>
+        <p class="status-desc" id="status-indicator-desc">检测系统网关接入点</p>
+      </div>
+
+      <nav class="sidebar-nav">
+        <a href="#" class="nav-item active" data-target="dashboard">
+          <i class="fa-solid fa-chart-line"></i><span>系统主页看板</span>
+        </a>
+        <a href="#" class="nav-item" id="btn-open-config-sidebar">
+          <i class="fa-solid fa-key"></i><span>阿里云密钥配置</span>
+        </a>
+
+        <div class="sidebar-section">
+          <div class="sidebar-section-title">已连接终端设备</div>
+          <div id="sidebar-devices-list" class="sidebar-devices-list"></div>
+        </div>
+
+        <a href="#" class="nav-item" id="btn-open-devices-sidebar" style="margin-top: auto;">
+          <i class="fa-solid fa-gears"></i><span>管理设备列表</span>
+        </a>
+      </nav>
+    </aside>
+
+    <main class="main-content">
+      <header class="app-header">
+        <div class="header-title-section">
+          <h1 id="main-header-title">阿里云 IoT 终端控制舱</h1>
+          <p class="header-subtitle">实时监控物理终端 Sensor 遥测数据，并下发物模型控制指令</p>
+        </div>
+
+        <div class="header-actions">
+          <div class="device-selector-container">
+            <select id="device-select" class="premium-select"></select>
+          </div>
+
+          <button class="btn btn-primary" id="btn-config-trigger" title="设置阿里云 OpenAPI 凭证">
+            <i class="fa-solid fa-cloud-arrow-up"></i> 阿里云 OpenAPI
+          </button>
+
+          <div class="live-clock" id="header-clock">
+            <i class="fa-regular fa-clock"></i> <span id="clock-time">00:00:00</span>
+          </div>
+        </div>
+      </header>
+
+      <section id="dashboard-page" class="app-page">
+      <div id="cloud-sync-banner" class="glass-card sync-prompt-banner hidden">
+        <div class="banner-icon-wrapper">
+          <i class="fa-solid fa-cloud-bolt"></i>
+        </div>
+        <div class="banner-content">
+          <h3>离线本地仿真模式运行中</h3>
+          <p>当前仪表盘处于本地仿真运行，数据为随机模拟值。请配置您的 <strong>阿里云 RAM 访问密钥 (AccessKey ID & AccessKey Secret)</strong>，以开启只读实时拉取通道，直连读取桌面中 <strong>Sensor</strong> 物理设备上报到阿里云的真实遥测数据。</p>
+        </div>
+        <button class="btn btn-primary" id="btn-banner-config-trigger">立即配置密钥</button>
+      </div>
+
+      <div class="dashboard-grid">
+        <section class="telemetry-cards-row">
+          <div class="stat-card" id="card-temp">
+            <div class="stat-icon-wrapper green-glow"><i class="fa-solid fa-thermometer"></i></div>
+            <div class="stat-info">
+              <span class="stat-title">实时温度</span>
+              <span class="stat-value" id="main-val-temp">--.- <span class="stat-unit">°C</span></span>
+            </div>
+          </div>
+          <div class="stat-card" id="card-hum">
+            <div class="stat-icon-wrapper cyan-glow"><i class="fa-solid fa-droplet"></i></div>
+            <div class="stat-info">
+              <span class="stat-title">环境湿度</span>
+              <span class="stat-value" id="main-val-hum">--.- <span class="stat-unit">%</span></span>
+            </div>
+          </div>
+          <div class="stat-card" id="card-adc">
+            <div class="stat-icon-wrapper purple-glow"><i class="fa-solid fa-gauge-simple-high"></i></div>
+            <div class="stat-info">
+              <span class="stat-title">光敏电阻 ADC</span>
+              <span class="stat-value" id="main-val-adc">--- <span class="stat-unit">ADC</span></span>
+            </div>
+          </div>
+          <div class="stat-card" id="card-vol">
+            <div class="stat-icon-wrapper orange-glow"><i class="fa-solid fa-bolt"></i></div>
+            <div class="stat-info">
+              <span class="stat-title">恒定输出电压</span>
+              <span class="stat-value" id="main-val-vol">-.-- <span class="stat-unit">V</span></span>
+            </div>
+          </div>
+        </section>
+
+        <div class="cockpit-middle-grid">
+          <div class="glass-card cockpit-card cockpit-instrument-card">
+            <div class="cockpit-card-header">
+              <h2><i class="fa-solid fa-satellite"></i> 3D 姿态物理仪</h2>
+            </div>
+            <div class="attitude-indicator-container">
+              <div class="attitude-widget">
+                <span class="widget-label"><i class="fa-solid fa-compass"></i> 偏航角 (Yaw)</span>
+                <div class="compass-dial-wrapper">
+                  <div class="compass-dial" id="yaw-compass-dial">
+                    <span class="compass-dir dir-n">N</span>
+                    <span class="compass-dir dir-e">E</span>
+                    <span class="compass-dir dir-s">S</span>
+                    <span class="compass-dir dir-w">W</span>
+                    <div class="compass-needle"></div>
+                  </div>
+                  <span class="attitude-deg-value" id="yaw-deg-val">0.0°</span>
+                </div>
+              </div>
+
+              <div class="attitude-widget">
+                <span class="widget-label"><i class="fa-solid fa-arrows-spin"></i> 姿态仪 (Roll / Pitch)</span>
+                <div class="attitude-sphere-wrapper">
+                  <div class="attitude-sphere" id="attitude-sphere-ball">
+                    <div class="attitude-pitch-lines"></div>
+                  </div>
+                  <div class="attitude-ring-fixed"></div>
+                </div>
+                <div class="attitude-deg-pair">
+                  <span>横滚: <span id="roll-deg-val" style="color: var(--neon-cyan)">0.0°</span></span>
+                  <span>俯仰: <span id="pitch-deg-val" style="color: var(--neon-purple)">0.0°</span></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="glass-card cockpit-card cockpit-control-card">
+            <div class="cockpit-card-header">
+              <h2><i class="fa-solid fa-sliders"></i> 物模型控制中心</h2>
+            </div>
+            <div class="control-panel-container">
+              <div class="control-item">
+                <div class="control-meta">
+                  <span class="control-title">LED0状态</span>
+                  <span class="control-identifier">Identifier: LEDSwitch0</span>
+                </div>
+                <div class="toggle-switch-wrapper">
+                  <input type="checkbox" id="ctrl-Sensor-led0" class="command-checkbox">
+                  <label for="ctrl-Sensor-led0" class="toggle-switch-label"></label>
+                </div>
+              </div>
+
+              <div class="control-item">
+                <div class="control-meta">
+                  <span class="control-title">LED1状态</span>
+                  <span class="control-identifier">Identifier: LEDSwitch1</span>
+                </div>
+                <div class="toggle-switch-wrapper">
+                  <input type="checkbox" id="ctrl-Sensor-led1" class="command-checkbox">
+                  <label for="ctrl-Sensor-led1" class="toggle-switch-label"></label>
+                </div>
+              </div>
+
+              <div class="common-commands-section">
+                <div class="control-action-label">远程重启硬件</div>
+                <button class="btn btn-outline btn-reboot" id="btn-reboot-device" title="远程重启硬件">
+                  <i class="fa-solid fa-arrows-rotate"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+        <div class="glass-card cockpit-chart-card">
+          <div class="cockpit-card-header">
+            <h2><i class="fa-solid fa-chart-area"></i> 物理设备核心数据历史趋势</h2>
+          </div>
+          <div class="sensor-chart-grid" id="sensor-chart-grid">
+            <div class="mini-chart-card">
+              <div class="mini-chart-title">温度趋势</div>
+              <div class="chart-container mini-chart-container">
+                <canvas id="temperatureChart"></canvas>
+              </div>
+            </div>
+            <div class="mini-chart-card">
+              <div class="mini-chart-title">湿度趋势</div>
+              <div class="chart-container mini-chart-container">
+                <canvas id="humidityChart"></canvas>
+              </div>
+            </div>
+          </div>
+          <div class="chart-container generic-chart-container hidden" id="generic-chart-container">
+            <canvas id="telemetryChart"></canvas>
+          </div>
+        </div>
+      </div>
+      </section>
+
+      <section id="device-management-page" class="app-page hidden">
+        <div class="glass-card device-page-card">
+          <div class="device-page-header">
+            <div>
+              <h2><i class="fa-solid fa-gears"></i> 阿里云终端管理</h2>
+              <p>查看已添加的阿里云设备记录。在线时显示数据更新时间，离线时显示离线时间。</p>
+            </div>
+            <button class="btn btn-primary" id="btn-add-device-record">
+              <i class="fa-solid fa-plus"></i> 添加阿里云终端
+            </button>
+          </div>
+          <div id="device-management-list" class="device-management-list"></div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-overlay" id="config-modal">
+    <div class="config-drawer">
+      <div class="drawer-header">
+        <h2><i class="fa-solid fa-cloud-arrow-up"></i> 阿里云 OpenAPI 凭证中心</h2>
+        <button class="btn-close-drawer" id="btn-close-config-drawer">&times;</button>
+      </div>
+      <div class="drawer-body">
+        <p class="config-guide">请输入您的阿里云子账号 <strong>RAM AccessKey</strong> 凭证。配置后，前端面板发送的开关指令会通过 <strong>阿里云 OpenAPI 信道</strong> 投递到物理云端，再由云端分发给您的物理硬件。</p>
+
+        <form id="aliyun-config-form">
+          <div class="form-group">
+            <label for="input-accessKeyId">AccessKey ID</label>
+            <input type="password" id="input-accessKeyId" placeholder="输入 LTAI5t... 开头的 RAM 密钥" required autocomplete="off">
+            <span class="field-hint">请确保子账号拥有 AliyunIOTFullAccess 控制权限</span>
+          </div>
+
+          <div class="form-group">
+            <label for="input-accessKeySecret">AccessKey Secret</label>
+            <input type="password" id="input-accessKeySecret" placeholder="输入 32 位阿里云密钥凭证密钥" required autocomplete="off">
+          </div>
+
+          <div class="form-group">
+            <label for="input-regionId">物联网所在地域 ID (Region ID)</label>
+            <select id="input-regionId">
+              <option value="cn-shanghai" selected>华东2（上海）- cn-shanghai</option>
+              <option value="cn-beijing">华北2（北京）- cn-beijing</option>
+              <option value="cn-shenzhen">华南1（深圳）- cn-shenzhen</option>
+              <option value="cn-hangzhou">华东1（杭州）- cn-hangzhou</option>
+              <option value="ap-southeast-1">亚太东南1（新加坡）- ap-southeast-1</option>
+            </select>
+          </div>
+
+          <div class="drawer-actions">
+            <button type="button" class="btn btn-outline" id="btn-reset-to-mock">重置 / 清除 Key</button>
+            <button type="submit" class="btn btn-primary" id="btn-save-config">激活 OpenAPI 通道</button>
+          </div>
+        </form>
+
+        <div class="config-security-note">
+          <i class="fa-solid fa-shield-check"></i>
+          <p><b>安全声明</b>：本系统保存的凭证仅保存在您本地运行的 Node.js 实例中，绝不会上传到任何第三方或公共服务器。</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-overlay" id="devices-modal">
+    <div class="config-drawer">
+      <div class="drawer-header">
+        <h2><i class="fa-solid fa-sliders"></i> 物联网设备管理</h2>
+        <button class="btn-close-drawer" id="btn-close-devices-drawer">&times;</button>
+      </div>
+      <div class="drawer-body">
+        <p class="config-guide">填写阿里云终端信息后保存。已保存记录会在“管理设备列表”页面展示，可在那里修改或删除。</p>
+
+        <form id="add-device-form" class="add-device-form">
+          <h3 id="device-form-title" class="form-section-title" style="font-size: 0.95rem; font-weight: 700; color: var(--neon-cyan); border-bottom: 1px solid var(--border-glass); padding-bottom: 0.3rem;">添加阿里云终端</h3>
+          <input type="hidden" id="input-device-original-id">
+          <div class="form-group">
+            <label for="input-device-id">终端 ID（唯一标识）</label>
+            <input type="text" id="input-device-id" placeholder="例如: Sensor-01" required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="input-device-name">终端显示名称</label>
+            <input type="text" id="input-device-name" placeholder="例如: 阿里云终端 Sensor" required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="input-device-type">设备类型</label>
+            <select id="input-device-type">
+              <option value="Sensor" selected>阿里云物理终端 (Sensor)</option>
+              <option value="Generic">通用监测终端 (Generic)</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="input-device-pk">ProductKey（选填）</label>
+            <input type="text" id="input-device-pk" placeholder="阿里云 ProductKey" autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="input-device-dn">DeviceName（选填）</label>
+            <input type="text" id="input-device-dn" placeholder="阿里云 DeviceName" autocomplete="off">
+          </div>
+          <div class="drawer-actions">
+            <button type="button" class="btn btn-outline" id="btn-cancel-device-edit">取消</button>
+            <button type="submit" class="btn btn-primary" id="btn-save-device-record">
+              <i class="fa-solid fa-plus"></i> 保存终端记录
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

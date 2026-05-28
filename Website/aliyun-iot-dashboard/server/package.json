@@ -1,0 +1,18 @@
+{
+  "name": "aliyun-iot-dashboard-server",
+  "version": "1.0.0",
+  "description": "Server for Aliyun IoT Dashboard",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "@alicloud/iot20180120": "^2.0.7",
+    "@alicloud/openapi-client": "^0.4.8",
+    "mqtt": "^5.5.0"
+  }
+}

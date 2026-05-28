@@ -1,0 +1,53 @@
+{
+  "name": "aliyun-iot-dashboard-desktop",
+  "version": "1.0.0",
+  "description": "Desktop launcher for the Aliyun IoT Dashboard",
+  "main": "desktop/main.js",
+  "scripts": {
+    "desktop": "electron .",
+    "pack": "electron-builder --win portable"
+  },
+  "build": {
+    "appId": "com.antigravity.aliyun-iot-dashboard",
+    "productName": "Aliyun IoT Dashboard",
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist"
+    },
+    "extraResources": [
+      {
+        "from": "server",
+        "to": "server",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "client",
+        "to": "client",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "files": [
+      "desktop/**/*",
+      "package.json"
+    ],
+    "win": {
+      "signAndEditExecutable": false,
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    }
+  },
+  "devDependencies": {
+    "electron": "^31.7.7",
+    "electron-builder": "^24.13.3"
+  }
+}
