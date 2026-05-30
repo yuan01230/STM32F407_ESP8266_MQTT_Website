@@ -29,6 +29,32 @@ endif()
 # Set the project name
 set(CMAKE_PROJECT_NAME 1_LED)
 
+# MCU flags must be configured before project() and add_subdirectory(), so
+# STM32CubeMX object libraries inherit them even when CLion bypasses presets.
+set(MCU_FLAGS "-mcpu=cortex-m4 -mthumb -mfpu=fpv4-sp-d16 -mfloat-abi=hard")
+
+function(append_unique_flags variable flags)
+    foreach(flag IN LISTS flags)
+        string(FIND " ${${variable}} " " ${flag} " flag_index)
+        if(flag_index EQUAL -1)
+            string(APPEND ${variable} " ${flag}")
+        endif()
+    endforeach()
+    set(${variable} "${${variable}}" PARENT_SCOPE)
+endfunction()
+
+separate_arguments(MCU_FLAGS_LIST NATIVE_COMMAND "${MCU_FLAGS}")
+append_unique_flags(CMAKE_C_FLAGS "${MCU_FLAGS_LIST}")
+append_unique_flags(CMAKE_ASM_FLAGS "${MCU_FLAGS_LIST}")
+append_unique_flags(CMAKE_EXE_LINKER_FLAGS "${MCU_FLAGS_LIST}")
+
+if(CMAKE_C_COMPILER MATCHES "arm-none-eabi-gcc")
+    append_unique_flags(CMAKE_EXE_LINKER_FLAGS "--specs=nano.specs")
+    append_unique_flags(CMAKE_EXE_LINKER_FLAGS "-Wl,-Map=${CMAKE_PROJECT_NAME}.map;-Wl,--gc-sections;-Wl,--print-memory-usage")
+    append_unique_flags(CMAKE_EXE_LINKER_FLAGS "-T;${CMAKE_SOURCE_DIR}/STM32F407XX_FLASH.ld")
+    set(TOOLCHAIN_LINK_LIBRARIES m)
+endif()
+
 # Enable compile command to ease indexing with e.g. clangd
 set(CMAKE_EXPORT_COMPILE_COMMANDS TRUE)
 
@@ -129,10 +155,6 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
 
     # Add user defined libraries
 )
-# 开启硬件浮点运算
-set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -mfpu=fpv4-sp-d16 -mfloat-abi=hard")
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -mfpu=fpv4-sp-d16 -mfloat-abi=hard")
-
 # 使能printf相关函数支持浮点数
 target_link_options(${CMAKE_PROJECT_NAME} PRIVATE -u _printf_float)
 

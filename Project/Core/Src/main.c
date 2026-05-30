@@ -49,10 +49,14 @@ UART_HandleTypeDef huart3;
 SRAM_HandleTypeDef hsram1;
 
 /* USER CODE BEGIN PV */
+/* 串口/任务状态计数，用于后续调试或界面显示 */
 static uint32_t g_uart_test_count = 0U;
+/* MPU6050 基础驱动和 DMP 姿态解算模块的初始化状态 */
 static uint8_t g_mpu_ready = 0U;
 static uint8_t g_mpu_dmp_ready = 0U;
+/* 非阻塞刷新定时器：主循环每 500ms 刷新一次传感器数据 */
 static delay_nb_timer_t g_sensor_refresh_timer;
+/* 光照、温湿度和姿态角的最新采样值，会同步给 LCD 和阿里云物联网模块 */
 static uint16_t g_light_adc_value = 0U;
 static float g_light_voltage_value = 0.0f;
 static float g_dht_temperature_value = 0.0f;
@@ -60,6 +64,7 @@ static float g_dht_humidity_value = 0.0f;
 static float g_pitch_value = 0.0f;
 static float g_roll_value = 0.0f;
 static float g_yaw_value = 0.0f;
+/* LCD 上各字段的显示缓存，用来避免相同内容重复刷新造成闪烁 */
 static char g_dht_temp_text[24] = "";
 static char g_dht_humi_text[24] = "";
 static char g_light_adc_text[24] = "";
@@ -100,6 +105,11 @@ static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *ca
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+/**
+  * @brief  更新 LCD 上某一行数值文本。
+  * @note   函数会按显示宽度补空格，并与缓存比较；内容没变时直接返回，
+  *         这样可以减少 LCD 重绘次数，降低界面闪烁。
+  */
 static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *cache, const char *text, uint16_t color)
 {
   char padded_text[24];
@@ -108,9 +118,11 @@ static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *ca
 
   if ((cache == NULL) || (text == NULL))
   {
+    /* 参数无效时不刷新，避免空指针访问 */
     return;
   }
 
+  /* 按 8x16 字符宽度估算当前区域最多能显示多少个字符 */
   max_chars = width / 8U;
   if (max_chars == 0U)
   {
@@ -121,6 +133,7 @@ static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *ca
     max_chars = sizeof(padded_text) - 1U;
   }
 
+  /* 用空格填满整行，覆盖上一次较长文本留下的尾巴 */
   memset(padded_text, ' ', max_chars);
   padded_text[max_chars] = '\0';
   text_len = strlen(text);
@@ -132,6 +145,7 @@ static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *ca
 
   if (strcmp(cache, padded_text) == 0)
   {
+    /* 显示内容没有变化时跳过 LCD 写入 */
     return;
   }
 
@@ -141,6 +155,10 @@ static void LCD_UpdateValueLine(uint16_t x, uint16_t y, uint16_t width, char *ca
   cache[23] = '\0';
 }
 
+/**
+  * @brief  绘制主仪表盘的固定框架和字段标题。
+  * @note   实时数据由 LCD_Test_Run() 周期刷新。
+  */
 static void LCD_Test_ShowWelcome(void)
 {
   BACK_COLOR = WHITE;
@@ -187,6 +205,9 @@ static void LCD_Test_ShowWelcome(void)
   LCD_ShowString(14U, 420U, 60U, 20U, 16U, (uint8_t *)"Yaw:");
 }
 
+/**
+  * @brief  绘制开机初始化界面。
+  */
 static void LCD_ShowBootScreen(void)
 {
   BACK_COLOR = WHITE;
@@ -204,6 +225,12 @@ static void LCD_ShowBootScreen(void)
   LCD_ShowString(34U, 178U, 240U, 24U, 16U, (uint8_t *)"Please wait");
 }
 
+/**
+  * @brief  更新开机界面的两行状态文字。
+  * @param  line1 第一行状态文本，可为 NULL。
+  * @param  line2 第二行状态文本，可为 NULL。
+  * @param  color 文本颜色，用于区分正常状态和错误状态。
+  */
 static void LCD_UpdateBootStatus(const char *line1, const char *line2, uint16_t color)
 {
   char text1[32];
@@ -228,6 +255,11 @@ static void LCD_UpdateBootStatus(const char *line1, const char *line2, uint16_t 
   LCD_ShowString(34U, 178U, 240U, 24U, 16U, (uint8_t *)text2);
 }
 
+/**
+  * @brief  采集所有传感器数据，刷新 LCD，并把最新数据推送给阿里云 IoT 状态机。
+  * @note   当前函数由主循环每 500ms 调用一次；其中 ESP8266/云端通信由
+  *         AliyunIoT_Task() 在主循环中持续推进。
+  */
 static void LCD_Test_Run(void)
 {
   char line[64];
@@ -247,6 +279,7 @@ static void LCD_Test_Run(void)
   AliyunIoT_SensorData_t sensor_data;
 
   BACK_COLOR = WHITE;
+  /* 读取 DHT11 温湿度，成功时更新数值，失败时显示错误提示 */
   if (DHT11_ReadData(&dht11_sample) == 0U)
   {
     g_dht_temperature_value = (float)dht11_sample.temp_int + ((float)dht11_sample.temp_dec / 10.0f);
@@ -262,6 +295,7 @@ static void LCD_Test_Run(void)
     LCD_UpdateValueLine(120U, 92U, 180U, g_dht_humi_text, "--", RED);
   }
 
+  /* 读取光敏传感器 ADC 均值，并转换成电压和亮度等级 */
   light_adc = LightSensor_ReadADCAverage(3U);
   light_voltage = LightSensor_ConvertToVoltage(light_adc);
   light_level = LightSensor_GetLevelByADC(light_adc);
@@ -273,6 +307,7 @@ static void LCD_Test_Run(void)
   LCD_UpdateValueLine(80U, 168U, 78U, g_light_volt_text, line, BLACK);
   LCD_UpdateValueLine(220U, 168U, 82U, g_light_level_text, LightSensor_LevelToString(light_level), BLACK);
 
+  /* MPU6050 基础数据：加速度、陀螺仪和芯片温度 */
   if ((g_mpu_ready != 0U) &&
       (MPU_Get_Accelerometer(&ax, &ay, &az) == 0U) &&
       (MPU_Get_Gyroscope(&gx, &gy, &gz) == 0U))
@@ -297,6 +332,7 @@ static void LCD_Test_Run(void)
     LCD_UpdateValueLine(78U, 292U, 90U, g_mpu_temp_text, "Raw failed", RED);
   }
 
+  /* DMP 解算出的姿态角；若 DMP 未就绪，保留历史值或显示占位符 */
   if ((g_mpu_dmp_ready != 0U) && (mpu_dmp_get_data(&pitch, &roll, &yaw) == 0U))
   {
     g_pitch_value = pitch;
@@ -325,6 +361,7 @@ static void LCD_Test_Run(void)
     }
   }
 
+  /* 将本次采样结果交给阿里云 IoT 模块，由其状态机决定何时上报 */
   sensor_data.temperature = g_dht_temperature_value;
   sensor_data.humidity = g_dht_humidity_value;
   sensor_data.light_adc = g_light_adc_value;
@@ -334,6 +371,7 @@ static void LCD_Test_Run(void)
   sensor_data.yaw = g_yaw_value;
   AliyunIoT_UpdateSensorData(&sensor_data);
 
+  /* 在底部状态栏显示 ESP8266 最近响应、状态机步骤和 AT OK 次数 */
   snprintf(line, sizeof(line), "ESP:%.18s", AliyunIoT_GetLastLine());
   LCD_UpdateValueLine(70U, 452U, 170U, g_status_left_text, line, BLACK);
   snprintf(line, sizeof(line), "S%u O%lu", (unsigned int)AliyunIoT_GetStep(), AliyunIoT_GetOkCount());
@@ -377,20 +415,31 @@ int main(void)
   MX_TIM2_Init();
   MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
+  /* 初始化板级外设驱动：LED、按键、蜂鸣器和延时模块 */
   LED_Init();
   Key_Init();
   BEEP_Init();
   delay_init();
   delay_nb_init();
+
+  /* 初始化 LCD，并在传感器准备期间显示开机状态 */
   TFTLCD_Init();
   LCD_ShowBootScreen();
   LCD_UpdateBootStatus("LCD init done", "Init sensors", BLACK);
+
+  /* 拉高 ESP8266 复位/使能相关引脚，使模块进入工作状态 */
   HAL_GPIO_WritePin(ESP8266EST_GPIO_Port, ESP8266EST_Pin, GPIO_PIN_SET);
+
+  /* 初始化本地传感器：DHT11 温湿度和光敏 ADC */
   DHT11_Init();
   LightSensor_Init();
   LCD_UpdateBootStatus("Sensor init done", "Init ESP8266", BLACK);
+
+  /* USART3 连接 ESP8266，阿里云 IoT 模块通过状态机发送 AT 指令 */
   AliyunIoT_Init(&huart3);
   LCD_UpdateBootStatus("ESP8266 init done", "Init MPU6050", BLACK);
+
+  /* 初始化 MPU6050；DMP 依赖基础初始化成功后再加载 */
   g_mpu_ready = (MPU_Init() == 0U) ? 1U : 0U;
   LCD_UpdateBootStatus((g_mpu_ready != 0U) ? "MPU6050 init ok" : "MPU6050 init fail",
                        "Init DMP",
@@ -399,6 +448,8 @@ int main(void)
   LCD_UpdateBootStatus((g_mpu_dmp_ready != 0U) ? "DMP init ok" : "DMP init fail",
                        "Load dashboard",
                        (g_mpu_dmp_ready != 0U) ? BLACK : RED);
+
+  /* 绘制仪表盘并立即刷新一次数据，之后由非阻塞定时器周期刷新 */
   LCD_Test_ShowWelcome();
   LCD_Test_Run();
   delay_nb_start_ms(&g_sensor_refresh_timer, 500U);
@@ -414,6 +465,7 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
+    /* 传感器和 LCD 采用 500ms 周期刷新，不阻塞 ESP8266 通信状态机 */
     if (delay_nb_is_expired(&g_sensor_refresh_timer) == 1U)
     {
       g_uart_test_count++;
@@ -421,6 +473,7 @@ int main(void)
       delay_nb_start_ms(&g_sensor_refresh_timer, 500U);
     }
 
+    /* 持续推进 ESP8266/阿里云 IoT 的 AT 指令状态机 */
     AliyunIoT_Task();
     /* USER CODE END WHILE */
 
@@ -440,6 +493,7 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
+  /* 使能 PWR 时钟并配置电压档位，满足 168MHz 主频运行要求 */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
@@ -455,6 +509,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.PLL.PLLN = 336;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 7;
+  /* 使用 HSI 作为 PLL 输入，倍频后得到系统主时钟 */
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -469,6 +524,7 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
+  /* 配置 AHB/APB 总线分频和 Flash 等待周期 */
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
@@ -493,6 +549,7 @@ static void MX_ADC3_Init(void)
 
   /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
   */
+  /* ADC3 用于光敏传感器采样：单通道、软件触发、12 位右对齐 */
   hadc3.Instance = ADC3;
   hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc3.Init.Resolution = ADC_RESOLUTION_12B;
@@ -512,6 +569,7 @@ static void MX_ADC3_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
+  /* ADC_CHANNEL_5 对应当前硬件连接的光敏传感器输入 */
   sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = 1;
   sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
@@ -563,6 +621,7 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 1 */
   /* USER CODE END SPI1_Init 1 */
   /* SPI1 parameter configuration*/
+  /* SPI1 作为主机使用，片选由 GPIO 软件控制，主要服务外部 SPI 设备 */
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
@@ -602,6 +661,7 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
+  /* TIM2 配置为 32 位向上计数基础定时器，供延时/计时模块使用 */
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -642,6 +702,7 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE BEGIN USART1_Init 1 */
   /* USER CODE END USART1_Init 1 */
+  /* USART1 通常作为调试串口，波特率 115200 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
@@ -674,6 +735,7 @@ static void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 1 */
 
   /* USER CODE END USART3_Init 1 */
+  /* USART3 连接 ESP8266，供阿里云 IoT AT 指令通信使用 */
   huart3.Instance = USART3;
   huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
@@ -699,6 +761,7 @@ static void MX_DMA_Init(void)
 {
 
   /* DMA controller clock enable */
+  /* SDIO 收发使用 DMA2，这里开启时钟并配置中断优先级 */
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
@@ -723,6 +786,7 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
+  /* 先开启所有用到的 GPIO 端口时钟，再配置输入输出模式 */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
@@ -748,6 +812,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : KEY2_Pin KEY1_Pin KEY0_Pin */
+  /* KEY0/1/2 使用上拉输入，按下时读取到低电平 */
   GPIO_InitStruct.Pin = KEY2_Pin|KEY1_Pin|KEY0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
@@ -782,6 +847,7 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(ESP8266EST_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : KEY_UP_Pin */
+  /* KEY_UP 使用下拉输入，按下时读取到高电平 */
   GPIO_InitStruct.Pin = KEY_UP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
@@ -827,6 +893,7 @@ static void MX_FSMC_Init(void)
 
   /** Perform the SRAM1 memory initialization sequence
   */
+  /* FSMC Bank4 接外部 SRAM/LCD 并口总线，按 16 位数据宽度初始化 */
   hsram1.Instance = FSMC_NORSRAM_DEVICE;
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
@@ -873,6 +940,7 @@ static void MX_FSMC_Init(void)
 /* USER CODE BEGIN 4 */
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
+  /* 串口接收完成后交给阿里云 IoT 模块处理，当前主要关注 USART3/ESP8266 */
   AliyunIoT_RxCpltCallback(huart);
 }
 /* USER CODE END 4 */
