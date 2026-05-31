@@ -1,6 +1,9 @@
 #ifndef ALIYUN_IOT_CONFIG_H
 #define ALIYUN_IOT_CONFIG_H
 
+#if __has_include("aliyun_iot_config.local.h")
+#include "aliyun_iot_config.local.h"
+#else
 /*
  * Local-only Wi-Fi / Aliyun IoT settings.
  * Fill these values on your machine before building and keep real credentials out of git.
@@ -19,5 +22,6 @@
 #define ALIYUN_IOT_PROP_SET_REPLY_TOPIC "/sys/YOUR_PRODUCT_KEY/YOUR_DEVICE_NAME/thing/service/property/set_reply"
 
 #define ALIYUN_IOT_PROP_POST_INTERVAL_MS 10000U
+#endif
 
 #endif

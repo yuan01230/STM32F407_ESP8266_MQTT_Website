@@ -1,14 +1,14 @@
 const mqtt = require('mqtt');
+require('dotenv').config();
 
-// User's Aliyun IoT Device MQTT Credentials
 const config = {
-  host: 'iot-06z009yzvl7ads8.mqtt.iothub.aliyuncs.com',
-  port: 1883,
-  clientId: 'k0emt5tuoqi.Sensor|securemode=2,signmethod=hmacsha256,timestamp=1779110582660|',
-  username: 'Sensor&k0emt5tuoqi',
-  password: '0a9f072ec61c97c01a58bc03044be73a9bd9507721624a17bba5f04077cce890',
-  productKey: 'k0emt5tuoqi',
-  deviceName: 'Sensor'
+  host: process.env.ALIYUN_MQTT_HOST || 'YOUR_MQTT_HOST',
+  port: Number(process.env.ALIYUN_MQTT_PORT || 1883),
+  clientId: process.env.ALIYUN_MQTT_CLIENT_ID || 'YOUR_MQTT_CLIENT_ID',
+  username: process.env.ALIYUN_MQTT_USERNAME || 'YOUR_MQTT_USERNAME',
+  password: process.env.ALIYUN_MQTT_PASSWORD || 'YOUR_MQTT_PASSWORD',
+  productKey: process.env.ALIYUN_PRODUCT_KEY || 'YOUR_PRODUCT_KEY',
+  deviceName: process.env.ALIYUN_DEVICE_NAME || 'YOUR_DEVICE_NAME'
 };
 
 const topic = `/sys/${config.productKey}/${config.deviceName}/thing/event/property/post`;

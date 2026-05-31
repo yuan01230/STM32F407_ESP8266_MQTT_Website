@@ -2,6 +2,7 @@ build/
 build-codex/
 cmake-build-*/
 Debug/
+tmp/
 
 .idea/
 .qoder/

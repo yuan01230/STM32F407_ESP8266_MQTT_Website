@@ -3,6 +3,7 @@
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
 #include "fatfs.h"
+#include "lwip.h"
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
@@ -414,6 +415,7 @@ int main(void)
   MX_FATFS_Init();
   MX_TIM2_Init();
   MX_USART3_UART_Init();
+  MX_LWIP_Init();
   /* USER CODE BEGIN 2 */
   /* 初始化板级外设驱动：LED、按键、蜂鸣器和延时模块 */
   LED_Init();
@@ -475,6 +477,7 @@ int main(void)
 
     /* 持续推进 ESP8266/阿里云 IoT 的 AT 指令状态机 */
     AliyunIoT_Task();
+    MX_LWIP_Process();
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -493,23 +496,20 @@ void SystemClock_Config(void)
 
   /** Configure the main internal regulator output voltage
   */
-  /* 使能 PWR 时钟并配置电压档位，满足 168MHz 主频运行要求 */
   __HAL_RCC_PWR_CLK_ENABLE();
   __HAL_PWR_VOLTAGESCALING_CONFIG(PWR_REGULATOR_VOLTAGE_SCALE1);
 
   /** Initializes the RCC Oscillators according to the specified parameters
   * in the RCC_OscInitTypeDef structure.
   */
-  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSI;
-  RCC_OscInitStruct.HSIState = RCC_HSI_ON;
-  RCC_OscInitStruct.HSICalibrationValue = RCC_HSICALIBRATION_DEFAULT;
+  RCC_OscInitStruct.OscillatorType = RCC_OSCILLATORTYPE_HSE;
+  RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
-  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSI;
-  RCC_OscInitStruct.PLL.PLLM = 16;
+  RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
+  RCC_OscInitStruct.PLL.PLLM = 8;
   RCC_OscInitStruct.PLL.PLLN = 336;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 7;
-  /* 使用 HSI 作为 PLL 输入，倍频后得到系统主时钟 */
   if (HAL_RCC_OscConfig(&RCC_OscInitStruct) != HAL_OK)
   {
     Error_Handler();
@@ -524,7 +524,6 @@ void SystemClock_Config(void)
   RCC_ClkInitStruct.APB1CLKDivider = RCC_HCLK_DIV4;
   RCC_ClkInitStruct.APB2CLKDivider = RCC_HCLK_DIV2;
 
-  /* 配置 AHB/APB 总线分频和 Flash 等待周期 */
   if (HAL_RCC_ClockConfig(&RCC_ClkInitStruct, FLASH_LATENCY_5) != HAL_OK)
   {
     Error_Handler();
@@ -549,7 +548,6 @@ static void MX_ADC3_Init(void)
 
   /** Configure the global features of the ADC (Clock, Resolution, Data Alignment and number of conversion)
   */
-  /* ADC3 用于光敏传感器采样：单通道、软件触发、12 位右对齐 */
   hadc3.Instance = ADC3;
   hadc3.Init.ClockPrescaler = ADC_CLOCK_SYNC_PCLK_DIV4;
   hadc3.Init.Resolution = ADC_RESOLUTION_12B;
@@ -569,10 +567,9 @@ static void MX_ADC3_Init(void)
 
   /** Configure for the selected ADC regular channel its corresponding rank in the sequencer and its sample time.
   */
-  /* ADC_CHANNEL_5 对应当前硬件连接的光敏传感器输入 */
   sConfig.Channel = ADC_CHANNEL_5;
   sConfig.Rank = 1;
-  sConfig.SamplingTime = ADC_SAMPLETIME_84CYCLES;
+  sConfig.SamplingTime = ADC_SAMPLETIME_3CYCLES;
   if (HAL_ADC_ConfigChannel(&hadc3, &sConfig) != HAL_OK)
   {
     Error_Handler();
@@ -621,7 +618,6 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 1 */
   /* USER CODE END SPI1_Init 1 */
   /* SPI1 parameter configuration*/
-  /* SPI1 作为主机使用，片选由 GPIO 软件控制，主要服务外部 SPI 设备 */
   hspi1.Instance = SPI1;
   hspi1.Init.Mode = SPI_MODE_MASTER;
   hspi1.Init.Direction = SPI_DIRECTION_2LINES;
@@ -661,7 +657,6 @@ static void MX_TIM2_Init(void)
   /* USER CODE BEGIN TIM2_Init 1 */
 
   /* USER CODE END TIM2_Init 1 */
-  /* TIM2 配置为 32 位向上计数基础定时器，供延时/计时模块使用 */
   htim2.Instance = TIM2;
   htim2.Init.Prescaler = 83;
   htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
@@ -702,7 +697,6 @@ static void MX_USART1_UART_Init(void)
 
   /* USER CODE BEGIN USART1_Init 1 */
   /* USER CODE END USART1_Init 1 */
-  /* USART1 通常作为调试串口，波特率 115200 */
   huart1.Instance = USART1;
   huart1.Init.BaudRate = 115200;
   huart1.Init.WordLength = UART_WORDLENGTH_8B;
@@ -735,7 +729,6 @@ static void MX_USART3_UART_Init(void)
   /* USER CODE BEGIN USART3_Init 1 */
 
   /* USER CODE END USART3_Init 1 */
-  /* USART3 连接 ESP8266，供阿里云 IoT AT 指令通信使用 */
   huart3.Instance = USART3;
   huart3.Init.BaudRate = 115200;
   huart3.Init.WordLength = UART_WORDLENGTH_8B;
@@ -761,7 +754,6 @@ static void MX_DMA_Init(void)
 {
 
   /* DMA controller clock enable */
-  /* SDIO 收发使用 DMA2，这里开启时钟并配置中断优先级 */
   __HAL_RCC_DMA2_CLK_ENABLE();
 
   /* DMA interrupt init */
@@ -786,7 +778,6 @@ static void MX_GPIO_Init(void)
   /* USER CODE END MX_GPIO_Init_1 */
 
   /* GPIO Ports Clock Enable */
-  /* 先开启所有用到的 GPIO 端口时钟，再配置输入输出模式 */
   __HAL_RCC_GPIOE_CLK_ENABLE();
   __HAL_RCC_GPIOC_CLK_ENABLE();
   __HAL_RCC_GPIOF_CLK_ENABLE();
@@ -812,7 +803,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(DHT11_GPIO_Port, DHT11_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : KEY2_Pin KEY1_Pin KEY0_Pin */
-  /* KEY0/1/2 使用上拉输入，按下时读取到低电平 */
   GPIO_InitStruct.Pin = KEY2_Pin|KEY1_Pin|KEY0_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
@@ -847,7 +837,6 @@ static void MX_GPIO_Init(void)
   HAL_GPIO_Init(ESP8266EST_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : KEY_UP_Pin */
-  /* KEY_UP 使用下拉输入，按下时读取到高电平 */
   GPIO_InitStruct.Pin = KEY_UP_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLDOWN;
@@ -893,7 +882,6 @@ static void MX_FSMC_Init(void)
 
   /** Perform the SRAM1 memory initialization sequence
   */
-  /* FSMC Bank4 接外部 SRAM/LCD 并口总线，按 16 位数据宽度初始化 */
   hsram1.Instance = FSMC_NORSRAM_DEVICE;
   hsram1.Extended = FSMC_NORSRAM_EXTENDED_DEVICE;
   /* hsram1.Init */
