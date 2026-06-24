@@ -8,80 +8,91 @@ extern "C" {
 #include "main.h"
 
 /**
- * @brief LED ��Ŷ���
+ * @brief LED 编号定义
  * @note
- * - ö��˳�������弶���ñ� `BOARD_LED_CONFIG_TABLE` ˳��һ�¡�
- * - ������ LED����ͬʱ�޸ģ�
- *   1) `LED_TypeDef` ö��
+ * - 枚举顺序必须与板级配置表 `BOARD_LED_CONFIG_TABLE` 顺序一致。
+ * - 若新增 LED，请同时修改：
+ *   1) `LED_TypeDef` 枚举
  *   2) `BOARD_LED_COUNT`
  *   3) `BOARD_LED_CONFIG_TABLE`
  */
 typedef enum {
-    LED0 = 0, /**< �� 0 �� LED */
-    LED1,     /**< �� 1 �� LED */
-    LED_NUM   /**< LED ö���������ޣ�����ʵӲ�������� */
+    LED0 = 0, /**< 第 0 个 LED */
+    LED1,     /**< 第 1 个 LED */
+    LED_NUM   /**< LED 枚举数量上限（非真实硬件数量） */
 } LED_TypeDef;
 
 /**
- * @brief ��ʼ�� LED ����
+ * @brief 初始化 LED 驱动
  * @note
- * - �ú��������� GPIO �����ʼ����GPIO ���� `MX_GPIO_Init()` ��ǰ��ɡ�
- * - ��ǰ��ʼ������Ϊ��ȫ��Ϩ�𡱡�
+ * - 该函数不负责 GPIO 外设初始化，GPIO 需由 `MX_GPIO_Init()` 提前完成。
+ * - 当前初始化策略为“全部熄灭”。
  */
 void LED_Init(void);
 
 /**
- * @brief ����ָ�� LED
- * @param led LED ���
+ * @brief 点亮指定 LED
+ * @param led LED 编号
  * @note
- * - ����ŷǷ�������ֱ�ӷ��أ���ִ�в�����
- * - �����߼����Զ������/�͵�ƽ��Ч�������ϲ���ļ��ԡ�
+ * - 若编号非法，函数直接返回，不执行操作。
+ * - 点亮逻辑会自动适配高/低电平有效，无需上层关心极性。
  */
 void LED_On(LED_TypeDef led);
 
 /**
- * @brief Ϩ��ָ�� LED
- * @param led LED ���
+ * @brief 熄灭指定 LED
+ * @param led LED 编号
  * @note
- * - ����ŷǷ�������ֱ�ӷ��ء�
- * - Ϩ���߼����Զ������/�͵�ƽ��Ч��
+ * - 若编号非法，函数直接返回。
+ * - 熄灭逻辑会自动适配高/低电平有效。
  */
 void LED_Off(LED_TypeDef led);
 
 /**
- * @brief ��תָ�� LED ״̬
- * @param led LED ���
+ * @brief 翻转指定 LED 状态
+ * @param led LED 编号
  * @note
- * - ����ŷǷ�������ֱ�ӷ��ء�
- * - ��ת���ǡ���ǰ�������ŵ�ƽ���������ڿ���״̬�л���
+ * - 若编号非法，函数直接返回。
+ * - 翻转的是“当前物理引脚电平”，适用于快速状态切换。
  */
 void LED_Toggle(LED_TypeDef led);
 
 /**
- * @brief ����ȫ�� LED
+ * @brief 读取指定 LED 的逻辑状态。
+ * @param led LED 编号。
+ * @return uint8_t 1=亮，0=灭；编号非法时返回 0。
  * @note
- * - �����ñ�˳�����������
- * - �� `LED_NUM` ��弶����������һ�£����Խ�СֵΪ���ޣ�����Խ�硣
+ * - 返回值是“逻辑状态”，不是 GPIO 物理电平。
+ * - LED0/LED1 是低电平点亮时，底层会自动把 GPIO 电平换算成 1=亮、0=灭。
+ * - MQTT 状态回传使用该接口生成 led0/led1 字段。
+ */
+uint8_t LED_GetState(LED_TypeDef led);
+
+/**
+ * @brief 点亮全部 LED
+ * @note
+ * - 按配置表顺序逐个点亮。
+ * - 若 `LED_NUM` 与板级配置数量不一致，将以较小值为上限，避免越界。
  */
 void LED_AllOn(void);
 
 /**
- * @brief Ϩ��ȫ�� LED
+ * @brief 熄灭全部 LED
  * @note
- * - �����ñ�˳�����Ϩ��
- * - �� `LED_NUM` ��弶����������һ�£����Խ�СֵΪ���ޣ�����Խ�硣
+ * - 按配置表顺序逐个熄灭。
+ * - 若 `LED_NUM` 与板级配置数量不一致，将以较小值为上限，避免越界。
  */
 void LED_AllOff(void);
 
 /**
- * @brief ����ʽ��˸ָ�� LED
- * @param led LED ���
- * @param period_ms ��˸���ڣ���λ�����룩
- * @param times ��˸����
+ * @brief 阻塞式闪烁指定 LED
+ * @param led LED 编号
+ * @param period_ms 闪烁周期（单位：毫秒）
+ * @param times 闪烁次数
  * @note
- * - �ýӿ��ڲ�ʹ�� `HAL_Delay()`��Ϊ�������á�
- * - �� `period_ms==0` �� `times==0` �� `led` �Ƿ�ʱ����ִ����˸��
- * - ������Ϊ `period_ms/2`���� `period_ms` Ϊ����ʱ����� 1ms ������
+ * - 该接口内部使用 `HAL_Delay()`，为阻塞调用。
+ * - 当 `period_ms==0` 或 `times==0` 或 `led` 非法时，不执行闪烁。
+ * - 半周期为 `period_ms/2`，当 `period_ms` 为奇数时会存在 1ms 量化误差。
  */
 void LED_Blink(LED_TypeDef led, uint32_t period_ms, uint8_t times);
 

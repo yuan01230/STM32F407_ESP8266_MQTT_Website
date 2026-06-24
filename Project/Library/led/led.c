@@ -3,21 +3,21 @@
 #include "board_drv_config.h"
 
 /*
- * LED Çı¶¯Éè¼ÆËµÃ÷£º
- * 1) Ê¹ÓÃ¾²Ì¬ÅäÖÃ±í×¢²á LED Éè±¸£¨¶Ë¿Ú¡¢Òı½Å¡¢ÓĞĞ§µçÆ½£©¡£
- * 2) Çı¶¯Âß¼­Óë¾ßÌå°å¿¨Òı½Å½âñî£¬»»°å½öĞè¸Ä board_drv_config.h¡£
- * 3) Í³Ò»Í¨¹ı gpio_device_* ½Ó¿ÚÍê³ÉµçÆ½¿ØÖÆ£¬±ÜÃâÖØ¸´´úÂë¡£
+ * LED é©±åŠ¨è®¾è®¡è¯´æ˜ï¼š
+ * 1) ä½¿ç”¨é™æ€é…ç½®è¡¨æ³¨å†Œ LED è®¾å¤‡ï¼ˆç«¯å£ã€å¼•è„šã€æœ‰æ•ˆç”µå¹³ï¼‰ã€‚
+ * 2) é©±åŠ¨é€»è¾‘ä¸å…·ä½“æ¿å¡å¼•è„šè§£è€¦ï¼Œæ¢æ¿ä»…éœ€æ”¹ board_drv_config.hã€‚
+ * 3) ç»Ÿä¸€é€šè¿‡ gpio_device_* æ¥å£å®Œæˆç”µå¹³æ§åˆ¶ï¼Œé¿å…é‡å¤ä»£ç ã€‚
  */
 static const gpio_device_t s_led_table[] = {
     BOARD_LED_CONFIG_TABLE
 };
 
 /**
- * @brief Ğ£Ñé LED ±àºÅÊÇ·ñ¿ÉÓÃ
- * @param led LED Ã¶¾ÙÖµ
- * @return uint8_t 1=ÓĞĞ§£¬0=ÎŞĞ§
+ * @brief æ ¡éªŒ LED ç¼–å·æ˜¯å¦å¯ç”¨
+ * @param led LED æšä¸¾å€¼
+ * @return uint8_t 1=æœ‰æ•ˆï¼Œ0=æ— æ•ˆ
  * @note
- * - Í¬Ê±¼ì²é `LED_TypeDef` ·¶Î§ºÍ°å¼¶ÅäÖÃÊıÁ¿£¬·ÀÖ¹Êı×éÔ½½ç¡£
+ * - åŒæ—¶æ£€æŸ¥ `LED_TypeDef` èŒƒå›´å’Œæ¿çº§é…ç½®æ•°é‡ï¼Œé˜²æ­¢æ•°ç»„è¶Šç•Œã€‚
  */
 static uint8_t led_is_valid(LED_TypeDef led)
 {
@@ -25,8 +25,8 @@ static uint8_t led_is_valid(LED_TypeDef led)
 }
 
 /**
- * @brief ³õÊ¼»¯ LED Çı¶¯
- * @note µ±Ç°²ßÂÔÎªÄ¬ÈÏÏ¨ÃğËùÓĞ LED£¬±ÜÃâÉÏµçºó×´Ì¬²»È·¶¨¡£
+ * @brief åˆå§‹åŒ– LED é©±åŠ¨
+ * @note å½“å‰ç­–ç•¥ä¸ºé»˜è®¤ç†„ç­æ‰€æœ‰ LEDï¼Œé¿å…ä¸Šç”µåçŠ¶æ€ä¸ç¡®å®šã€‚
  */
 void LED_Init(void)
 {
@@ -34,23 +34,23 @@ void LED_Init(void)
 }
 
 /**
- * @brief µãÁÁÖ¸¶¨ LED
- * @param led LED ±àºÅ
+ * @brief ç‚¹äº®æŒ‡å®š LED
+ * @param led LED ç¼–å·
  */
 void LED_On(LED_TypeDef led)
 {
-    /* ÎŞĞ§±àºÅÖ±½Ó·µ»Ø£¬±£³Ö½Ó¿Ú¡°°²È«ÎŞ¸±×÷ÓÃ¡± */
+    /* æ— æ•ˆç¼–å·ç›´æ¥è¿”å›ï¼Œä¿æŒæ¥å£â€œå®‰å…¨æ— å‰¯ä½œç”¨â€ */
     if (!led_is_valid(led)) {
         return;
     }
 
-    /* Âß¼­ 1 = µãÁÁ£»µ×²ã×Ô¶¯»»ËãÎªÎïÀí¸ß/µÍµçÆ½ */
+    /* é€»è¾‘ 1 = ç‚¹äº®ï¼›åº•å±‚è‡ªåŠ¨æ¢ç®—ä¸ºç‰©ç†é«˜/ä½ç”µå¹³ */
     gpio_device_write(&s_led_table[led], 1U);
 }
 
 /**
- * @brief Ï¨ÃğÖ¸¶¨ LED
- * @param led LED ±àºÅ
+ * @brief ç†„ç­æŒ‡å®š LED
+ * @param led LED ç¼–å·
  */
 void LED_Off(LED_TypeDef led)
 {
@@ -58,13 +58,13 @@ void LED_Off(LED_TypeDef led)
         return;
     }
 
-    /* Âß¼­ 0 = Ï¨Ãğ£»µ×²ã×Ô¶¯»»ËãÎªÎïÀí¸ß/µÍµçÆ½ */
+    /* é€»è¾‘ 0 = ç†„ç­ï¼›åº•å±‚è‡ªåŠ¨æ¢ç®—ä¸ºç‰©ç†é«˜/ä½ç”µå¹³ */
     gpio_device_write(&s_led_table[led], 0U);
 }
 
 /**
- * @brief ·­×ªÖ¸¶¨ LED ×´Ì¬
- * @param led LED ±àºÅ
+ * @brief ç¿»è½¬æŒ‡å®š LED çŠ¶æ€
+ * @param led LED ç¼–å·
  */
 void LED_Toggle(LED_TypeDef led)
 {
@@ -76,18 +76,36 @@ void LED_Toggle(LED_TypeDef led)
 }
 
 /**
- * @brief µãÁÁËùÓĞ LED
+ * @brief è¯»å–æŒ‡å®š LED å½“å‰æ˜¯å¦å¤„äºç‚¹äº®çŠ¶æ€ã€‚
+ * @param led LED ç¼–å·ã€‚
+ * @return uint8_t 1=ç‚¹äº®ï¼Œ0=ç†„ç­æˆ–ç¼–å·éæ³•ã€‚
+ * @note
+ * - gpio_device_read() ä¼šæ ¹æ® BOARD_LED_CONFIG_TABLE ä¸­çš„æœ‰æ•ˆç”µå¹³é…ç½®åšè½¬æ¢ã€‚
+ * - ä¸Šå±‚ä¸éœ€è¦å…³å¿ƒ LED æ˜¯é«˜ç”µå¹³æœ‰æ•ˆè¿˜æ˜¯ä½ç”µå¹³æœ‰æ•ˆã€‚
+ * - å½“å‰ MQTT çŠ¶æ€å›ä¼ ä¼šè°ƒç”¨è¯¥å‡½æ•°ï¼ŒæŠŠ LED çŠ¶æ€å‘å¸ƒåˆ° stm32/statusã€‚
+ */
+uint8_t LED_GetState(LED_TypeDef led)
+{
+    if (!led_is_valid(led)) {
+        return 0U;
+    }
+
+    return gpio_device_read(&s_led_table[led]);
+}
+
+/**
+ * @brief ç‚¹äº®æ‰€æœ‰ LED
  */
 void LED_AllOn(void)
 {
-    /* Ë«ÉÏÏŞ±£»¤£º·ÀÖ¹Ã¶¾ÙÊıÁ¿ÓëÅäÖÃÊıÁ¿²»Ò»ÖÂµ¼ÖÂÔ½½ç */
+    /* åŒä¸Šé™ä¿æŠ¤ï¼šé˜²æ­¢æšä¸¾æ•°é‡ä¸é…ç½®æ•°é‡ä¸ä¸€è‡´å¯¼è‡´è¶Šç•Œ */
     for (uint32_t i = 0; i < BOARD_LED_COUNT && i < (uint32_t)LED_NUM; ++i) {
         gpio_device_write(&s_led_table[i], 1U);
     }
 }
 
 /**
- * @brief Ï¨ÃğËùÓĞ LED
+ * @brief ç†„ç­æ‰€æœ‰ LED
  */
 void LED_AllOff(void)
 {
@@ -97,14 +115,14 @@ void LED_AllOff(void)
 }
 
 /**
- * @brief ×èÈûÉÁË¸Ö¸¶¨ LED
- * @param led LED ±àºÅ
- * @param period_ms ÖÜÆÚ£¨ºÁÃë£©
- * @param times ÉÁË¸´ÎÊı
+ * @brief é˜»å¡é—ªçƒæŒ‡å®š LED
+ * @param led LED ç¼–å·
+ * @param period_ms å‘¨æœŸï¼ˆæ¯«ç§’ï¼‰
+ * @param times é—ªçƒæ¬¡æ•°
  */
 void LED_Blink(LED_TypeDef led, uint32_t period_ms, uint8_t times)
 {
-    /* ²ÎÊı±£»¤£º·Ç·¨ÊäÈë²»Ö´ĞĞ¶¯×÷ */
+    /* å‚æ•°ä¿æŠ¤ï¼šéæ³•è¾“å…¥ä¸æ‰§è¡ŒåŠ¨ä½œ */
     if (!led_is_valid(led) || period_ms == 0U || times == 0U) {
         return;
     }
